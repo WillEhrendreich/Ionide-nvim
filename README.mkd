@@ -1,0 +1,531 @@
+# Ionide-Nvim
+
+**F# support for Neovim ONLY**
+
+_An unofficial part of the [Ionide](http://ionide.io) plugin suite._
+
+## About Ionide-Nvim
+
+* A (now disconnected) fork of [Ionide-Vim](https://github.com/ionide/ionide-vim), which is a fork of [fsharp/vim-fsharp](https://github.com/fsharp/vim-fsharp).
+
+* Uses [FsAutoComplete](https://github.com/fsharp/FsAutoComplete) as a backend.
+
+* Uses Neovim's built-in LSP client (requires Neovim 0.5+)
+
+## Development Status
+
+Consider this to be beta since it's lacking features compared to Ionide-VSCode and not as battle-tested as that.
+
+That being said, I use this plugin daily so it will someday become feature-rich and stable for sure.
+
+Feel free to [request features and/or file bug reports](https://github.com/ionide/Ionide-Nvim/issues)!
+
+## Requirements
+
+* Neovim - this one will only run on Neovim. I'm simply unable and unwilling to support regular vim. 
+
+* [.NET Core SDK](https://dotnet.microsoft.com/download)
+  - Required to install and run FsAutoComplete.
+  - Very useful for command-line development.
+
+## Features
+
+- Syntax highlighting
+- Auto completions
+- Error highlighting, error list, and quick fixes based on errors
+- Tooltips
+- Codelens
+- Go to Definition
+- Find all references
+- Highlighting usages
+- Rename
+- Show symbols in file
+- Find symbol in workspace
+- Show signature in status line
+- Integration with F# Interactive
+- Integration with [FSharpLint](https://github.com/fsprojects/FSharpLint) (additional hints and quick fixes)
+- Integration with [Fantomas](https://github.com/fsprojects/fantomas/) (the best formatter available for F#)
+
+## Getting Started
+
+### Install FsAutoComplete
+
+If you're not relying on Mason, install FsAutoComplete with `dotnet tool install`.
+
+If you want to install it as a "global" tool, run `dotnet tool install -g fsautocomplete`.
+
+If you want to install it as a project-local tool, run `dotnet tool install fsautocomplete`
+at the root directory of your F# project, and configure `ionide.cmd`
+
+### Install a LSP Client
+
+#### For Neovim 0.8+
+
+No LSP client plugin is required.
+
+If you are using [neovim/nvim-lspconfig](https://github.com/neovim/nvim-lspconfig), do *not* enable `fsautocomplete`.
+Ionide-Nvim automatically integrates itself into nvim-lspconfig and will register itself as a server.
+
+### Install an autocompletion plugin
+
+We recommend using [nvim-cmp](https://github.com/hrsh7th/nvim-cmp).
+
+~~~.lua
+
+-- this sample mostly from Lazyvim's setup. It's very nice, and uses lazy.nvim for plugin management.-
+-- must have a snippet engine for nvim-cmp
+-- we recommend luaSnip 
+{
+  "L3MON4D3/LuaSnip",
+  build = (not jit.os:find("Windows"))
+      and "echo 'NOTE: jsregexp is optional, so not a big deal if it fails to build'; make install_jsregexp"
+    or nil,
+  dependencies = {
+    "rafamadriz/friendly-snippets",
+    config = function()
+      require("luasnip.loaders.from_vscode").lazy_load()
+    end,
+  },
+  opts = {
+    history = true,
+    delete_check_events = "TextChanged",
+  },
+  -- stylua: ignore
+  keys = {
+    {
+      "<tab>",
+      function()
+        return require("luasnip").jumpable(1) and "<Plug>luasnip-jump-next" or "<tab>"
+      end,
+      expr = true, silent = true, mode = "i",
+    },
+    { "<tab>", function() require("luasnip").jump(1) end, mode = "s" },
+    { "<s-tab>", function() require("luasnip").jump(-1) end, mode = { "i", "s" } },
+  },
+},
+{
+  "hrsh7th/nvim-cmp",
+  version = false, -- last release is way too old
+  event = "InsertEnter",
+  dependencies = {
+    "hrsh7th/cmp-nvim-lsp",
+    "hrsh7th/cmp-buffer",
+    "hrsh7th/cmp-path",
+    "saadparwaiz1/cmp_luasnip",
+  },
+  opts = function()
+    vim.api.nvim_set_hl(0, "CmpGhostText", { link = "Comment", default = true })
+    local cmp = require("cmp")
+    local defaults = require("cmp.config.default")()
+    return {
+      completion = {
+        completeopt = "menu,menuone,noinsert",
+      },
+      snippet = {
+        expand = function(args)
+          require("luasnip").lsp_expand(args.body)
+        end,
+      },
+      mapping = cmp.mapping.preset.insert({
+        ["<C-n>"] = cmp.mapping.select_next_item({ behavior = cmp.SelectBehavior.Insert }),
+        ["<C-p>"] = cmp.mapping.select_prev_item({ behavior = cmp.SelectBehavior.Insert }),
+        ["<C-b>"] = cmp.mapping.scroll_docs(-4),
+        ["<C-f>"] = cmp.mapping.scroll_docs(4),
+        ["<C-Space>"] = cmp.mapping.complete(),
+        ["<C-e>"] = cmp.mapping.abort(),
+        ["<CR>"] = cmp.mapping.confirm({ select = true }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
+        ["<S-CR>"] = cmp.mapping.confirm({
+          behavior = cmp.ConfirmBehavior.Replace,
+          select = true,
+        }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
+      }),
+      sources = cmp.config.sources({
+        { name = "nvim_lsp" },
+        { name = "luasnip" },
+        { name = "buffer" },
+        { name = "path" },
+      }),
+      experimental = {
+        ghost_text = {
+          hl_group = "CmpGhostText",
+        },
+      },
+      sorting = defaults.sorting,
+    }
+  end,
+}
+~~~
+
+
+### Install Ionide-Nvim
+
+~~~lua
+-- lazy.nvim
+  {
+    "WillEhrendreich/Ionide-Nvim",
+    dependencies = {
+      {
+      -- highly recommended to use Mason. very nice for lsp/linter/tool installations. 
+        "williamboman/mason.nvim",
+        opts = {
+        -- here we make sure fsautocomplete is downloaded by mason, which Ionide absolutely needs in order to work. 
+          ensure_installed = {
+            "fsautocomplete",
+          },
+        },
+        {
+        -- very recommended to use nvim-lspconfig, as it takes care of much of the management of starting Ionide,
+          "neovim/nvim-lspconfig",
+          version = false, -- last release is way too old
+          opts = {
+            servers = {
+              ---@type IonideOptions
+              ionide = {
+                IonideNvimSettings = {
+                },
+                cmd = {
+                  vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete.cmd"),
+                },
+                settings = {
+                  FSharp = {
+                  },
+                },
+              },
+            },
+            -- you can do any additional lsp server setup here
+            -- return true if you don't want this server to be setup with lspconfig
+            ---@type table<string, fun(server:string, opts:_.lspconfig.options):boolean?>
+            setup = {
+            --- ***VERY IMPORTANT*** 
+            --- if you don't wan't both ionide AND fsautocomplete to 
+            ---attach themselves to every fsharp file (you don't, trust me), you
+            --- need to make sure that fsautocomplete doesn't get it's setup function called. 
+            --- from within a lazy.nvim setup it simply means that you do the following:  
+              fsautocomplete = function(_, _)
+                return true
+              end,
+            --- and then pass the opts in from up above. 
+              ionide = function(_, opts)
+                require("ionide").setup(opts)
+              end,
+            },
+          },
+        },
+      },
+    },
+  },
+}
+
+~~~
+
+#### Installing manually
+
+Clone Ionide-Nvim to some runtimepath, I guess... but, honestly just don't. Too messy this way. 
+
+## Usage
+
+Opening either `*.fs`, `*.fsi` or `*.fsx` files should trigger syntax highlighting and other depending runtime files as well.
+Will's fork feature: opening a `*.fsproj` file will trigger Ionide to load. Yeah, It's awesome. 
+
+### Commands
+
+To be added as requested for F#-specific features.
+
+  - "Resets the current FSI session."
+#### `:IonideShowConfigs`
+  - "Shows the merged config." 
+
+#### `:IonideShowWorkspaceFolders`
+  - "Shows the workspace folders that fsac has loaded." 
+#### `:IonideLoadProjects`
+  - "load additional projects with this if you like" 
+#### `:IonideShowNvimSettings`
+  - "Shows just the IonideNvimSettings portion of the config." 
+
+#### `:IonideShowAllLoadedProjectInfo`
+  - "Show all currently loaded Project Info" 
+
+#### `:IonideShowLoadedProjects`
+  - "Shows just the project names that have been loaded." 
+
+#### `:IonideLoadProjects <files>+`
+  - Loads specified projects (`sln` or `fsproj`).
+
+#### `:IonideWorkspacePeek`
+  - Allows for the selection of specific [sln's](technically just using it as a new starting point to look for projects, sln files not supported in FSAC) to be loaded in addition to the one that it might have automatically found. 
+
+
+### Working with F# Interactive
+
+Ionide-Nvim has an integration with F# Interactive.
+FSI is displayed using the builtin `:terminal` feature in Neovim and can be used like in VSCode.
+
+#### `:IonideSendCurrentLineToFSI`
+  - "Send Current line's text to FSharp Interactive"
+#### `:IonideSendWholeBufferToFSI`
+  - "Send Current buffer's text to FSharp Interactive" 
+#### `:IonideToggleFSI`
+  - "Toggle FSharp Interactive" 
+#### `:IonideQuitFSI`
+  - "Quit FSharp Interactive"
+#### `:IonideResetFSI`
+
+### Settings
+
+Here are all the defaults that end up in a final merged config 
+~~~lua
+
+ionide ={
+--- Settings specific to neovim's built-in LSP client
+    IonideNvimSettings = {
+    AutocmdEvents = { "LspAttach", "BufEnter", "BufWritePost", "CursorHold", "CursorHoldI", "InsertEnter", "InsertLeave" },
+    AutomaticReloadWorkspace = true,
+    AutomaticWorkspaceInit = true,
+    FsautocompleteCommand = { "fsautocomplete" },
+    --- refer to fsac documentation for other possible commands. 
+    FsiCommand = "dotnet fsi",
+    FsiFocusOnSend = false,
+    FsiKeymap = "vscode",
+    -- #### `Alt-Enter`
+    --   - When in normal mode, sends the current line to FSI.
+    --   - When in visual mode, sends the selection to FSI.
+    --   - Sending code to FSI opens FSI window but the cursor does not focus to it.
+    FsiKeymapSend = "<M-cr>",
+    -- #### `Alt-@`
+    --   - Toggles FSI window. FSI windows shown in different tabpages share the same FSI session.
+    --   - When opened, the cursor automatically focuses to the FSI window (unlike in `Alt-Enter` by default).
+    FsiKeymapToggle = "<M-@>",
+    FsiVscodeKeymaps = true,
+--##### Customize how FSI window is opened
+    FsiWindowCommand = "botright 10new",
+    LspAutoSetup = false,
+    LspCodelens = true,
+   --- Enable/disable the default colorscheme for diagnostics
+   --- *Default:* enabled
+   --- Neovim's LSP client comes with no default colorscheme, so Ionide-Nvim sets a VSCode-like one for LSP diagnostics by default.
+    LspRecommendedColorScheme = true,
+    ShowSignatureOnCursorMove = true,
+    Statusline = "Ionide",
+    UseRecommendedServerConfig = false
+  },
+  ---path to fsautocomplete. if it's installed globally, this should be fine. 
+  --- the project local version would be {"dotnet", "fsautocomplete" }
+  --- and the mason version would be 
+     --- Windows:  vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete.cmd"),
+     --- Non - Windows(I think..):  vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete"),
+  cmd = { "fsautocomplete" },
+  filetypes = { "fsharp" },
+  handlers = {
+  -- Ionide registers handlers for these lsp requests by default. 
+  --  do not copy paste this portion, just showing that there is some handling of these here 
+    -- ["fsharp/compilerLocation"]        = function(error,result,context,config) end,
+    -- ["fsharp/documentationSymbol"]     = function(error,result,context,config) end,
+    -- ["fsharp/notifyWorkspace"]         = function(error,result,context,config) end, 
+    -- ["fsharp/signature"]               = function(error,result,context,config) end,
+    -- ["fsharp/workspaceLoad"]           = function(error,result,context,config) end,
+    -- ["fsharp/workspacePeek"]           = function(error,result,context,config) end,
+    -- ["textDocument/documentHighlight"] = function(error,result,context,config) end,
+    -- ["textDocument/hover"]             = function(error,result,context,config) end,
+  },
+  init_options = {
+    AutomaticWorkspaceInit = true
+  },
+  log_level = 2,
+  message_level = 2,
+  name = "ionide",
+
+  --- this is what will run on every buffer that the client attaches itself to. 
+  --- it's a function that takes in (LspClient , bufferNumber) and does whatever you want after that
+  --- it's a good place to set some keymaps for specific lsp things, though in my experience there's a lot 
+  --- that you want set regardless, so it's only conditional stuff that you want to set here exactly. 
+  -- on_attach = your on attach func here. 
+
+  -- on_init =  -- ionide's init function goes here. I can't imagine why you'd want to change this, but feel free to open pr or ask about it.
+
+  -- this is the function used to find a root directory to pass to the Lsp. 
+  -- for root dir, it should be fine to leave it as is, but you can change it if you need to.
+  -- it is a function that gives a function that takes in a string which is the filename being opened. 
+  -- for reference, this is how ionide has implemented this: 
+    -- function M.GitFirstRootDir(n)
+    --   local root
+    --   root = util.find_git_ancestor(n)
+    --   root = root or util.root_pattern("*.sln")(n)
+    --   root = root or util.root_pattern("*.fsproj")(n)
+    --   root = root or util.root_pattern("*.fsx")(n)
+    --   return root
+    -- end
+  -- root_dir = M.GitFirstRootDir,
+
+
+  --- this is the settings table. it's what is passed to fsautocomplete on the UpdateSeverConfiguration function call, 
+  --- most importantly, Initialize calls the UpdateSeverConfiguration function with this data,
+  --- though if you change anything in here at runtime,
+  --- you're going to have to call the IonideUpdateServerConfiguration user command to to do that.  
+  --- in all likelihood, it's going to be easier to just make the setting change in your setup to ionide, and reload Neovim. 
+  settings = {
+    FSharp = {
+      abstractClassStubGeneration = true,
+      abstractClassStubGenerationMethodBody = 'failwith "Not Implemented"',
+      abstractClassStubGenerationObjectIdentifier = "this",
+      analyzersPath = { "packages/Analyzers", "analyzers" },
+      codeLenses = {
+        references = {
+          enabled = true
+        },
+        signature = {
+          enabled = true
+        }
+      },
+      debug = {
+        checkFileDebouncerTimeout = 250,
+        dontCheckRelatedFiles = false,
+        logCheckFileDuration = false,
+        logDurationBetweenCheckFiles = false
+      },
+      dotnetRoot = "",
+      enableAdaptiveLspServer = true,
+      enableAnalyzers = true,
+      enableMSBuildProjectGraph = true,
+      excludeProjectDirectories = { "paket-files", ".fable", "packages", "node_modules" },
+      --Includes external (from unopened modules and namespaces) symbols in autocomplete
+      externalAutocomplete = false,
+
+      fsac = {
+        attachDebugger = false,
+        conserveMemory = true,
+        dotnetArgs = {},
+        parallelReferenceResolution = true,
+        silencedLogs = {},
+        ---"EXPERIMENTAL. Enables the use of a new source text implementation. This may have better memory characteristics. Requires restart."
+        sourceTextImplementation = "RoslynSourceText"
+      },
+      fsiCompilerToolLocations = {},
+      fsiExtraParameters = { "" },
+      generateBinlog = false,
+      indentationSize = 2,
+      inlayHints = {
+        disableLongTooltip = false,
+        enabled = true,
+        parameterNames = true,
+        typeAnnotations = true
+      },
+      interfaceStubGeneration = true,
+      interfaceStubGenerationMethodBody = 'failwith "Not Implemented"',
+      interfaceStubGenerationObjectIdentifier = "this",
+      keywordsAutocomplete = true,
+      -- this seems to do nothing.. 
+      lineLens = {
+        enabled = "always",
+        prefix = "//"
+      },
+
+      linter = true,
+      recordStubGeneration = true,
+      recordStubGenerationBody = 'failwith "Not Implemented"',
+      resolveNamespaces = true,
+      simplifyNameAnalyzer = true,
+      suggestSdkScripts = true,
+      tooltipMode = "full",
+      unionCaseStubGeneration = true,
+      unionCaseStubGenerationBody = 'failwith "Not Implemented"',
+      unusedDeclarationsAnalyzer = true,
+      unusedOpensAnalyzer = true,
+      useSdkScripts = true,
+      workspaceModePeekDeepLevel = 4
+    }
+  }
+}
+~~~
+
+
+
+##### Set the keybindings for LSP features
+
+*Default:* not set
+
+Ionide-Nvim does *not* provide default keybindings for various LSP features, so you will have to set them yourself.
+
+* If you are using neovim's built-in LSP client, see [here](https://github.com/neovim/nvim-lspconfig#keybindings-and-completion).
+
+##### Enable/disable automatic refreshing CodeLens
+
+*Default:* enabled
+
+By default, Ionide-Nvim creates an AutoCommand so that CodeLens gets refreshed automatically.
+
+You can disable this by setting the below option:
+
+~~~lua
+ionide={
+  IonideNvimSettings={
+    ---defaults to true 
+    AutomaticCodeLensRefresh = false,
+  },
+  settings={
+    FSharp={
+      codeLenses={
+        references= {enabled = true},
+        signature= {enabled = true},
+      },
+    },
+  },
+}
+~~~
+
+#### FsAutoComplete Settings
+
+* Some of the settings may not work in Ionide-Nvim as it is lacking the corresponding feature of Ionide-VSCode.
+
+##### Enable/disable automatic loading of the workspace on opening F# files
+
+*Default:* enabled
+
+~~~lua
+ionide={
+  IonideNvimSettings={
+    ---defaults to true 
+    AutomaticWorkspaceInit = false,
+  },
+},
+~~~
+
+##### Set the deep level of directory hierarchy when searching for sln/fsprojs
+
+*Default:* `4'
+
+~~~lua
+ionide={
+  settings={
+    FSharp={
+      workspaceModePeekDeepLevel = 4,
+    },
+  },
+}
+~~~
+
+##### Ignore specific directories when loading a workspace
+
+*Default:* empty
+
+~~~lua
+ionide={
+  settings={
+    FSharp={
+      excludeProjectDirectories = { "paket-files", ".fable", "packages", "node_modules" },
+    },
+  },
+}
+~~~
+
+
+#### Linter & Formatter Settings
+
+Linting (other than the basic ones described above) and formatting is powered by independent tools, [FSharpLint](https://github.com/fsprojects/FSharpLint) and [Fantomas](https://github.com/fsprojects/fantomas/) respectively.
+
+Both uses their own JSON file for configuration and Ionide-Nvim does not control them. See their docs about configuration: [FSharpLint](http://fsprojects.github.io/FSharpLint/#Configuration-Files) and [Fantomas](https://github.com/fsprojects/fantomas/blob/master/docs/Documentation.md#--config-path-to-file-or-folder).
+
+
+## Maintainers
+
+* The primary maintainer for this repository is [@WillEhrendreich](http://github.com/WillEhrendreich).
+
