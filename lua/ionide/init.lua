@@ -1569,7 +1569,12 @@ function M.RegisterAutocmds()
       if M.MergedConfig.settings.FSharp.inlayHints.enabled == true then
         vim.defer_fn(function()
           -- M.notify("enabling lsp inlayHint")
-          vim.lsp.buf.inlay_hint(args.buf, true)
+          if vim.lsp.inlay_hint then
+            vim.lsp.inlay_hint(args.buf, true)
+          elseif vim.lsp.buf.inlay_hint then
+            vim.lsp.buf.inlay_hint(args.buf, true)
+          else
+          end
         end, 2000)
       else
         -- M.notify("lsp inlayHints are not enabled.")
