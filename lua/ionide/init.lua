@@ -207,13 +207,83 @@ M.MergedConfig = {}
 
 ---@type _.lspconfig.settings.fsautocomplete.FSharp
 M.DefaultServerSettings = {
+
+  -- `addFsiWatcher`,
+  addFsiWatcher = false,
+  -- `addPrivateAccessModifier`,
+  addPrivateAccessModifier = false,
+  -- `autoRevealInExplorer`,
+  autoRevealInExplorer = "sameAsFileExplorer",
+  -- `disableFailedProjectNotifications`,
+  disableFailedProjectNotifications = false,
+  -- `enableMSBuildProjectGraph`,
+  enableMSBuildProjectGraph = true,
+  -- `enableReferenceCodeLens`,
+  enableReferenceCodeLens = true,
+  -- `enableTouchBar`,
+  enableTouchBar = true,
+  -- `enableTreeView`,
+  enableTreeView = true,
+  -- `fsiSdkFilePath`,
+  fsiSdkFilePath = "",
+  -- `infoPanelReplaceHover`,
+  --  Not relevant to Neovim, currently
+  --  if there's a big demand I'll consider making one.
+  infoPanelReplaceHover = false,
+  -- `infoPanelShowOnStartup`,
+  infoPanelShowOnStartup = false,
+  -- `infoPanelStartLocked`,
+  infoPanelStartLocked = false,
+  -- `infoPanelUpdate`,
+  infoPanelUpdate = "onCursorMove",
+  -- `inlineValues`,
+  inlineValues = { enabled = true, prefix = "  // " },
+  -- `msbuildAutoshow`,
+  --  Not relevant to Neovim, currently
+  msbuildAutoshow = false,
+  -- `notifications`,
+  notifications = { trace = true, traceNamespaces = { "BoundModel.TypeCheck", "BackgroundCompiler." } },
+  -- `openTelemetry`,
+  openTelemetry = { enabled = false },
+  -- `pipelineHints`,
+  pipelineHints = { enabled = true, prefix = "  // " },
+  -- `saveOnSendLastSelection`,
+  saveOnSendLastSelection = false,
+  -- `showExplorerOnStartup`,
+  --  Not relevant to Neovim, currently
+  showExplorerOnStartup = false,
+  -- `showProjectExplorerIn`,
+  --  Not relevant to Neovim, currently
+  showProjectExplorerIn = "fsharp",
+  -- `simplifyNameAnalyzerExclusions`,
+  --  Not relevant to Neovim, currently
+  simplifyNameAnalyzerExclusions = { ".*\\.g\\.fs", ".*\\.cg\\.fs" },
+  -- `smartIndent`,
+  --  Not relevant to Neovim, currently
+  smartIndent = true,
+  -- `suggestGitignore`,
+  suggestGitignore = true,
+  -- `trace`,
+  trace = { server = "off" },
+  -- `unusedDeclarationsAnalyzerExclusions`,
+  unusedDeclarationsAnalyzerExclusions = { ".*\\.g\\.fs", ".*\\.cg\\.fs" },
+  -- `unusedOpensAnalyzerExclusions`,
+  unusedOpensAnalyzerExclusions = { ".*\\.g\\.fs", ".*\\.cg\\.fs" },
+  -- `verboseLogging`,
+  verboseLogging = false,
+  -- `workspacePath`
+  workspacePath = "",
+  -- `TestExplorer` = "",
+  --  Not relevant to Neovim, currently
+  TestExplorer = { AutoDiscoverTestsOnLoad = true },
+
   --   { AutomaticWorkspaceInit: bool option AutomaticWorkspaceInit = false
   --     WorkspaceModePeekDeepLevel: int option WorkspaceModePeekDeepLevel = 2
   workspaceModePeekDeepLevel = 4,
 
   fsac = {
     attachDebugger = false,
-    -- cachedTypeCheckCount = 200,
+    cachedTypeCheckCount = 200,
     conserveMemory = true,
     silencedLogs = {},
     parallelReferenceResolution = true,
@@ -227,7 +297,13 @@ M.DefaultServerSettings = {
     --    },
     sourceTextImplementation = "RoslynSourceText",
     dotnetArgs = {},
-    -- netCoreDllPath = "",
+    netCoreDllPath = "",
+    gc = {
+      conserveMemory = 0,
+      heapCount = 2,
+      noAffinitize = true,
+      server = true,
+    },
   },
 
   enableAdaptiveLspServer = true,
