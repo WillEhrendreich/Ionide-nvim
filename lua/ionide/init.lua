@@ -1903,11 +1903,35 @@ local function getFsiCommand()
     and M.MergedConfig.IonideNvimSettings.EnableFsiStdOutTeeToFile
     and M.MergedConfig.IonideNvimSettings.EnableFsiStdOutTeeToFile == true
   then
+    local teeToInvoke = " *>&1 | tee '"
+    local teeToTry = [[
+$Path = "$pshome\types.ps1xml";
+[IO.StreamReader]$reader = [System.IO.StreamReader]::new($Path)
+# embed loop in scriptblock:
+& {
+    while (-not $reader.EndOfStream)
+    {
+        # read current line
+        $reader.ReadLine()
+
+        # add artificial delay to pretend this was a HUGE file
+        Start-Sleep -Milliseconds 10
+    }
+# process results in real-time as they become available:
+} | Out-GridView
+
+# close and dispose the streamreader properly:
+$reader.Close()
+$reader.Dispose()
+
+    ]]
+    -- local teeToInvoke = [[ | ForEach-Object { tee $_ $_ } | tee ']]
+    local defaultOutputName = "./fsiOutputFile.txt"
     if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.FsiStdOutFileName then
       if M.MergedConfig.IonideNvimSettings.FsiStdOutFileName ~= "" then
-        cmd = cmd .. " | tee '" .. (M.MergedConfig.IonideNvimSettings.FsiStdOutFileName or "./fsiOutputFile.txt") .. "'"
+        cmd = cmd .. teeToInvoke .. (M.MergedConfig.IonideNvimSettings.FsiStdOutFileName or defaultOutputName) .. "'"
       else
-        cmd = cmd .. " | tee '" .. "./fsiOutputFile.txt" .. "'"
+        cmd = cmd .. teeToInvoke .. defaultOutputName .. "'"
       end
     end
   end
