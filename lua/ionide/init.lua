@@ -1012,6 +1012,7 @@ M.DefaultLspConfig = {
 }
 
 neoconf.register({
+  name = "ionide",
   on_schema = function(schema)
     if schema then
       ---@diagnostic disable-next-line
