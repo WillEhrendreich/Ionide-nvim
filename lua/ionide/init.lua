@@ -727,8 +727,8 @@ M["fsharp/notifyWorkspace"] = function(payload)
       -- M.notify("after calling updateServerconfig, workspace looks like:   " .. vim.inspect(Workspace))
       local projectCount = vim.tbl_count(M.Projects)
       if projectCount > 0 then
-        local util = require("vim.lsp.util")
-        local projNames = util.convert_input_to_markdown_lines(vim.tbl_map(function(s)
+        local lsputil = require("vim.lsp.util")
+        local projNames = lsputil.convert_input_to_markdown_lines(vim.tbl_map(function(s)
           return vim.fn.fnamemodify(s, ":P:.")
         end, vim.tbl_keys(M.Projects)))
         if projectCount > 1 then
