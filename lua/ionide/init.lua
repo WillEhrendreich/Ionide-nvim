@@ -575,6 +575,12 @@ local function parse_string(input_string)
   return input_string, "", M.DocumentationForSymbolRequest("NoProperSigGiven", "NoProperAssemblyGiven"), ""
 end
 
+---Resets the project folders and Projects tables to empty
+function M.ClearLocalIonideProjectsCollection()
+  M.Projects = {}
+  M.projectFolders ={}
+end
+
 function M.ParseAndReformatShowDocumentationFromHoverResponseContentLines(input, contents)
   -- -- value = string.gsub(value, "\r\n?", "\n")
   -- local thisIonide = vim.lsp.get_active_clients({ name = "ionide" })[1]
