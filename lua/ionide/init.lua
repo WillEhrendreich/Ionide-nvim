@@ -1,4 +1,3 @@
---  www.github.com/willehrendreich/ionide-vim
 
 local validate = vim.validate
 local api = vim.api
