@@ -310,6 +310,8 @@ M.DefaultServerSettings = {
   excludeProjectDirectories = { "paket-files", ".fable", "packages", "node_modules" },
   --     KeywordsAutocomplete: bool option false
   keywordsAutocomplete = true,
+  --     fullNameExternalAutocomplete: bool option false
+  fullNameExternalAutocomplete = false,
   --     ExternalAutocomplete: bool option false
   externalAutocomplete = false,
   --     Linter: bool option false
