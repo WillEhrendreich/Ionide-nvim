@@ -680,11 +680,18 @@ M["textDocument/hover"] = function(error, result, context, config)
   --     .. "result is: \n"
   --     .. vim.inspect({ error or "", result or "", context or "", config or "" })
   -- )
-  -- if result then
-  --   if result.content then
-  vim.lsp.handlers.hover(error or {}, result or {}, context or {}, config or {})
-  --   end
-  -- end
+  if result then
+    if result.content then
+      if not result.content.message then
+        M.notify(
+          "textDocument/hover" .. " | " .. "result.content.message is null. full result is: \n" .. vim.inspect(result)
+        )
+        result.content["message"] = ""
+        M.notify("result.content.message is now: \n" .. vim.inspect(result.content.message))
+      end
+    end
+    vim.lsp.handlers.hover(error or {}, result, context or {}, config or {})
+  end
   -- vim.lsp.handlers.hover(error or {}, result or {}, context or {}, config or {})
 end
 
