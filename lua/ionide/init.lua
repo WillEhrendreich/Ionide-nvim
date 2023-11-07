@@ -977,7 +977,8 @@ function M.CreateHandlers()
       elseif method == "fsharp/documentationSymbol" then
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
       else
-        M[method](params)
+        -- M[method](params)
+        M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
       end
     end
   end
