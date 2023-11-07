@@ -976,9 +976,10 @@ function M.CreateHandlers()
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
       elseif method == "fsharp/documentationSymbol" then
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
-      else
-        -- M[method](params)
+      elseif method == "textDocument/hover" then
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
+      else
+        M[method](params)
       end
     end
   end
