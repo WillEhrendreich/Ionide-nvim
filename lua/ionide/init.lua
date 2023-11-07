@@ -673,13 +673,13 @@ M["textDocument/documentHighlight"] = function(error, result, context, config)
 end
 
 M["textDocument/hover"] = function(error, result, context, config)
-  M.notify(
-    "handling "
-      .. "textDocument/hover"
-      .. " | "
-      .. "result is: \n"
-      .. vim.inspect({ error or "", result or "", context or "", config or "" })
-  )
+  -- M.notify(
+  --   "handling "
+  --     .. "textDocument/hover"
+  --     .. " | "
+  --     .. "result is: \n"
+  --     .. vim.inspect({ error or "", result or "", context or "", config or "" })
+  -- )
   if result then
     if result.content then
     end
@@ -688,13 +688,13 @@ M["textDocument/hover"] = function(error, result, context, config)
 end
 
 M["fsharp/documentationSymbol"] = function(error, result, context, config)
-  M.notify(
-    "handling "
-      .. "fsharp/documentationSymbol"
-      .. " | "
-      .. "result is: \n"
-      .. vim.inspect({ error or "", result or "", context or "", config or "" })
-  )
+  -- M.notify(
+  --   "handling "
+  --     .. "fsharp/documentationSymbol"
+  --     .. " | "
+  --     .. "result is: \n"
+  --     .. vim.inspect({ error or "", result or "", context or "", config or "" })
+  -- )
   if result then
     if result.content then
     end
