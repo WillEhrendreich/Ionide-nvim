@@ -667,7 +667,7 @@ end
 
 --see: https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_documentHighlight
 M["textDocument/documentHighlight"] = function(error, result, context, config)
-  if not error then
+  if result then
     vim.lsp.handlers["textDocument/documentHighlight"](error, result, context, config)
   end
 end
@@ -680,11 +680,9 @@ M["textDocument/hover"] = function(error, result, context, config)
   --     .. "result is: \n"
   --     .. vim.inspect({ error or "", result or "", context or "", config or "" })
   -- )
-  if not error then
-    if result then
-      if result.content then
-        vim.lsp.handlers.hover(error or {}, result.content.message or {}, context or {}, config or {})
-      end
+  if result then
+    if result.content then
+      vim.lsp.handlers.hover(error or {}, result.content.message or {}, context or {}, config or {})
     end
   end
   -- vim.lsp.handlers.hover(error or {}, result or {}, context or {}, config or {})
