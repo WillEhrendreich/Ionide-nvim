@@ -680,11 +680,14 @@ M["textDocument/hover"] = function(error, result, context, config)
   --     .. "result is: \n"
   --     .. vim.inspect({ error or "", result or "", context or "", config or "" })
   -- )
-  if result then
-    if result.content then
+  if not error then
+    if result then
+      if result.content then
+        vim.lsp.handlers.hover(error or {}, result.content.message or {}, context or {}, config or {})
+      end
     end
   end
-  vim.lsp.handlers.hover(error or {}, result or {}, context or {}, config or {})
+  -- vim.lsp.handlers.hover(error or {}, result or {}, context or {}, config or {})
 end
 
 M["fsharp/documentationSymbol"] = function(error, result, context, config)
