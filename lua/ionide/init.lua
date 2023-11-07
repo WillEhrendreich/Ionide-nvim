@@ -1,4 +1,3 @@
-
 local validate = vim.validate
 local api = vim.api
 local uc = vim.api.nvim_create_user_command
@@ -241,7 +240,7 @@ M.DefaultServerSettings = {
   --  Not relevant to Neovim, currently
   msbuildAutoshow = false,
   -- `notifications`,
-  notifications = { trace = true, traceNamespaces = { "BoundModel.TypeCheck", "BackgroundCompiler." } },
+  notifications = { trace = false, traceNamespaces = { "BoundModel.TypeCheck", "BackgroundCompiler." } },
   -- `openTelemetry`,
   openTelemetry = { enabled = false },
   -- `pipelineHints`,
@@ -579,7 +578,7 @@ end
 ---Resets the project folders and Projects tables to empty
 function M.ClearLocalIonideProjectsCollection()
   M.Projects = {}
-  M.projectFolders ={}
+  M.projectFolders = {}
 end
 
 function M.ParseAndReformatShowDocumentationFromHoverResponseContentLines(input, contents)
@@ -610,7 +609,7 @@ function M.ParseAndReformatShowDocumentationFromHoverResponseContentLines(input,
         vim.schedule_wrap(function()
           vim.lsp.buf_request(0, parsedOrFunctionName, decodedJsonTable, function(e, r)
             result = vim.inspect(e) .. vim.inspect(r)
-            M.notify("results from request " .. vim.inspect(parsedOrFunctionName) .. ":" .. result)
+            -- M.notify("results from request " .. vim.inspect(parsedOrFunctionName) .. ":" .. result)
             table.insert(contents, result)
           end)
         end)
@@ -784,11 +783,11 @@ end
 M["fsharp/workspacePeek"] = function(error, result, context, config)
   if result then
     local resultContent = result.content
-    -- M.notify(
-    --   "handling workspacePeek response\n"
-    --     .. "result is: \n"
-    --     .. vim.inspect(resultContent or "result.content could not be read correctly")
-    -- )
+    M.notify(
+      "handling workspacePeek response\n"
+        .. "result is: \n"
+        .. vim.inspect(resultContent or "result.content could not be read correctly")
+    )
     ---@type Solution []
     local solutions = {}
     local directory
@@ -1199,6 +1198,12 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpWorkspacePeek(directoryPath, depth, excludedDirs, handler)
+  ---@type LspClient
+  -- local i=  vim.lsp.get_client_by_id(
+  local i = vim.lsp.get_client_by_id(0)
+  vim.notify("Lsp peek client" .. vim.inspect(i))
+  -- i.
+
   return M.Call("fsharp/workspacePeek", M.CreateFSharpWorkspacePeekRequest(directoryPath, depth, excludedDirs), handler)
 end
 
@@ -1277,10 +1282,6 @@ end
 
 ---Loads the given projects list.
 ---@param projects string[] -- projects only
----@return table<integer, integer>, fun() 2-tuple:
----  - Map of client-id:request-id pairs for all successful requests.
----  - Function which can be used to cancel all the requests. You could instead
----    iterate all clients and call their `cancel_request()` methods.
 function M.LoadProjects(projects)
   if projects then
     for _, proj in ipairs(projects) do
