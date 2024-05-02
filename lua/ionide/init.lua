@@ -1215,7 +1215,7 @@ function M.CallFSharpWorkspacePeek(directoryPath, depth, excludedDirs, handler)
 
   ---@type vim.lsp.Client
   local i = vim.lsp.get_clients(lspFilter)
-  vim.notify("Lsp peek client " .. vim.inspect(i))
+  -- vim.notify("Lsp peek client " .. vim.inspect(i))
   -- i.
 
   return M.Call("fsharp/workspacePeek", M.CreateFSharpWorkspacePeekRequest(directoryPath, depth, excludedDirs), handler)
