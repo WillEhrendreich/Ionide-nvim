@@ -1208,10 +1208,14 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpWorkspacePeek(directoryPath, depth, excludedDirs, handler)
-  ---@type LspClient
-  -- local i=  vim.lsp.get_client_by_id(
-  local i = vim.lsp.get_client_by_id(0)
-  vim.notify("Lsp peek client" .. vim.inspect(i))
+  ---@type vim.lsp.get_clients.Filter
+  local lspFilter = {
+    name = "ionide",
+  }
+
+  ---@type vim.lsp.Client
+  local i = vim.lsp.get_clients(lspFilter)
+  vim.notify("Lsp peek client " .. vim.inspect(i))
   -- i.
 
   return M.Call("fsharp/workspacePeek", M.CreateFSharpWorkspacePeekRequest(directoryPath, depth, excludedDirs), handler)
@@ -1399,10 +1403,10 @@ function M.RegisterAutocmds()
       if M.MergedConfig.settings.FSharp.inlayHints.enabled == true then
         vim.defer_fn(function()
           -- M.notify("enabling lsp inlayHint")
-          if vim.lsp.inlay_hint then
-            vim.lsp.inlay_hint(args.buf, true)
-          elseif vim.lsp.buf.inlay_hint then
+          if vim.lsp.buf.inlay_hint then
             vim.lsp.buf.inlay_hint(args.buf, true)
+          elseif vim.lsp.inlay_hint then
+            vim.lsp.inlay_hint.enable(true)
           else
           end
         end, 2000)
@@ -1431,7 +1435,7 @@ function M.RegisterAutocmds()
     end,
   })
 
-  autocmd({ "CursorHold,InsertLeave" }, {
+  autocmd({ "CursorHold", "CursorHoldI", "InsertLeave" }, {
     desc = "Ionide Show Signature on cursor move or hold",
     group = grp("FSharp_ShowSignatureOnCursorMoveOrHold", { clear = true }),
     pattern = "*.fs,*.fsi,*.fsx",
