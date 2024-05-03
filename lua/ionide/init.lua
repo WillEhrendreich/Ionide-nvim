@@ -236,6 +236,11 @@ M.DefaultServerSettings = {
   infoPanelUpdate = "onCursorMove",
   -- `inlineValues`,
   inlineValues = { enabled = true, prefix = "  // " },
+  --includeAnalyzers
+  includeAnalyzers = {},
+  --excludeAnalyzers
+  excludeAnalyzers = {},
+  unnecessaryParenthesesAnalyzer = true,
   -- `msbuildAutoshow`,
   --  Not relevant to Neovim, currently
   msbuildAutoshow = false,
