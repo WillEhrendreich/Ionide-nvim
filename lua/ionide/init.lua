@@ -234,8 +234,8 @@ M.DefaultServerSettings = {
   infoPanelStartLocked = false,
   -- `infoPanelUpdate`,
   infoPanelUpdate = "onCursorMove",
-  -- `inlineValues`,
-  inlineValues = { enabled = true, prefix = "  // " },
+  -- `inlineValues`, https://github.com/ionide/ionide-vscode-fsharp/issues/1963   https://github.com/ionide/FsAutoComplete/issues/1214
+  inlineValues = { enabled = false, prefix = "  // " },
   --includeAnalyzers
   includeAnalyzers = {},
   --excludeAnalyzers
@@ -517,6 +517,7 @@ local function returnFuncNameToCallFromCapture(s)
 
   return result
 end
+
 ---comment
 ---@param input string
 ---@return string
@@ -536,7 +537,6 @@ local function unHtmlify(input)
   else
     result = input
   end
-
   -- print("unHtmlify result: " .. result)
   return result
 end
