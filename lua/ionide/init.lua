@@ -283,7 +283,7 @@ M.DefaultServerSettings = {
   --   { AutomaticWorkspaceInit: bool option AutomaticWorkspaceInit = false
   --     WorkspaceModePeekDeepLevel: int option WorkspaceModePeekDeepLevel = 2
   workspaceModePeekDeepLevel = 4,
-
+  fcs = { transparentCompiler = { enabled = true } },
   fsac = {
     attachDebugger = false,
     cachedTypeCheckCount = 200,
@@ -540,6 +540,29 @@ local function unHtmlify(input)
   -- print("unHtmlify result: " .. result)
   return result
 end
+-- Your HTML string
+-- local html = "<a href='command:fsharp.showDocumentation?%5B%7B%20%22XmlDocSig%22%3A%20%22T%3AMicrosoft%22%2C%20%22AssemblyName%22%3A%20%22RTI.EDI.WebTools.NavPac%22%20%7D%5D'>Open the documentation</a>"
+-- -- local html = "<a href='command:fsharp.showDocumentation?%5B%7B%20%22XmlDocSig%22%3A%20%22T%3AFabload.Main.CLIArguments%22%2C%20%22AssemblyName%22%3A%20%22main%22%20%7D%5D'>Open the documentation</a>"
+-- -- vim.notify(html)
+-- -- Extract the href attribute using Lua string pattern matching
+-- -- local href = html:match("href='command:fsharp.showDocumentation%?(.-)'")
+-- local href = html:match("href='(.-)'")
+-- -- vim.notify(html)
+-- -- Remove the 'command:fsharp.showDocumentation?' prefix and decode the URL
+-- local json_str = unHtmlify(href:gsub("command:fsharp.showDocumentation%?", ""))
+-- -- local json_str = unHtmlify(href)
+-- -- vim.notify(json_str)
+-- -- Parse the JSON
+-- local obj = vim.fn.json_decode(json_str)
+-- -- vim.notify((obj))
+-- vim.notify(vim.inspect(obj))
+-- -- Extract the XmlDocSig and AssemblyName values
+-- local xmlDocSig = obj[1]["XmlDocSig"]
+-- local assemblyName = obj[1]["AssemblyName"]
+-- -- Generate the new Markdown link
+-- local markdown_link = string.format("[Open the documentation](nvim://definition/%s/%s)", xmlDocSig, assemblyName)
+-- vim.notify(markdown_link)
+
 --- gets the various parts given by hover request and returns them
 ---@param input_string string
 ---function name
@@ -700,6 +723,19 @@ M["textDocument/hover"] = function(error, result, context, config)
   -- vim.lsp.handlers.hover(error or {}, result or {}, context or {}, config or {})
 end
 
+M["fsharp/showDocumentation"] = function(error, result, context, config)
+  M.notify(
+    "handling "
+      .. "fsharp/showDocumentation"
+      .. " | "
+      .. "result is: \n"
+      .. vim.inspect({ error or "", result or "", context or "", config or "" })
+  )
+  if result then
+    if result.content then
+    end
+  end
+end
 M["fsharp/documentationSymbol"] = function(error, result, context, config)
   -- M.notify(
   --   "handling "
