@@ -156,7 +156,7 @@ M.getIonideClientAttachedToCurrentBufferOrFirstInActiveClients = function()
   local bufnr = vim.api.nvim_get_current_buf()
   -- local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
   -- local projectRoot = vim.fs.normalize(M.GitFirstRootDir(bufname))
-  local ionideClientsList = vim.lsp.get_active_clients({ name = "ionide" })
+  local ionideClientsList = vim.lsp.get_clients({ name = "ionide" })
   if ionideClientsList then
     if #ionideClientsList > 1 then
       for _, client in ipairs(ionideClientsList) do
@@ -1096,16 +1096,22 @@ end
 ---@param path string
 ---@return lsp.TextDocumentIdentifier
 function M.TextDocumentIdentifier(path)
-  local usr_ss_opt = vim.o.shellslash
-  vim.o.shellslash = true
+  local is_windows = vim.loop.os_uname().version:match("Windows")
+  local usr_ss_opt
+  if is_windows then
+    usr_ss_opt = vim.o.shellslash
+    vim.o.shellslash = true
+  end
   local uri = vim.fn.fnamemodify(path, ":p")
   if string.sub(uri, 1, 1) == "/" then
     uri = "file://" .. uri
   else
     uri = "file:///" .. uri
   end
-  vim.o.shellslash = usr_ss_opt
-
+  if is_windows then
+    vim.o.shellslash = usr_ss_opt
+  end
+  ---
   ---@type lsp.TextDocumentIdentifier
   return { Uri = uri }
 end
@@ -1530,11 +1536,11 @@ function M.Initialize()
   M.RegisterAutocmds()
   local thisBufnr = vim.api.nvim_get_current_buf()
   local thisBufname = vim.api.nvim_buf_get_name(thisBufnr)
-  ---@type lsp.Client
-  local thisIonide = vim.lsp.get_active_clients({ bufnr = thisBufnr, name = "ionide" })[1]
-    or { workspace_folders = { { vim.fn.getcwd() } } }
+  ---@type vim.lsp.Client
+  local thisIonide = vim.lsp.get_clients({ bufnr = thisBufnr, name = "ionide" })[1]
+    or { workspace_folders = { { name = vim.fn.getcwd() } } }
 
-  local thisBufIonideRootDir = thisIonide.workspace_folders[1][1] -- or vim.fn.getcwd()
+  local thisBufIonideRootDir = thisIonide.workspace_folders[1].name -- or vim.fn.getcwd()
   M.CallFSharpWorkspacePeek(
     thisBufIonideRootDir,
     M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel,
@@ -1666,7 +1672,7 @@ autocmd({ "BufReadPost" }, {
     -- M.notify("closest fs file is  " .. closestFsFile )
     ---@type integer
     local closestFileBufNumber = vim.fn.bufadd(closestFsFile)
-    local ionideClientsList = vim.lsp.get_active_clients({ name = "ionide" })
+    local ionideClientsList = vim.lsp.get_clients({ name = "ionide" })
     local isAleadyStarted = false
     if ionideClientsList then
       for _, client in ipairs(ionideClientsList) do
