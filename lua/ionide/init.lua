@@ -751,15 +751,17 @@ M["fsharp/documentationSymbol"] = function(error, result, context, config)
 end
 
 M["fsharp/notifyWorkspace"] = function(payload)
-  -- M.notify("handling notifyWorkspace")
-  local content = vim.json.decode(payload.content)
-  -- M.notify("notifyWorkspace Decoded content is : \n"..vim.inspect(content))
+  M.notify("handling notifyWorkspace")
+  -- M.notify(vim.inspect(payload))
+
+  local content = vim.json.decode(payload.content or "{}")
   if content then
+    M.notify("notifyWorkspace Decoded content is : \n" .. vim.inspect(content))
     if content.Kind == "projectLoading" then
       M.notify("Loading " .. vim.fs.normalize(content.Data.Project))
       -- M.notify("now calling AddOrUpdateThenSort on table  " .. vim.inspect(Workspace))
       --
-      -- table.insert( M.Projects, content.Data.Project)
+      table.insert(M.Projects, content.Data.Project)
       -- -- local dir = vim.fs.dirname(content.Data.Project)
       -- M.notify("after attempting to reassign table value it looks like this : " .. vim.inspect(Workspace))
     elseif content.Kind == "project" then
@@ -769,6 +771,7 @@ M["fsharp/notifyWorkspace"] = function(payload)
 
       M.Projects = vim.tbl_deep_extend("force", M.Projects, projInfo)
     elseif content.Kind == "workspaceLoad" and content.Data.Status == "finished" then
+      M.notify("content.Kind was workspaceLoad and content.Data.Status was finished")
       -- M.notify("calling updateServerConfig ... ")
       -- M.notify("before calling updateServerconfig, workspace looks like:   " .. vim.inspect(Workspace))
 
@@ -810,12 +813,17 @@ M["fsharp/notifyWorkspace"] = function(payload)
 end
 
 M["fsharp/workspaceLoad"] = function(result)
-  M.notify(
-    "handling workspaceLoad response\n"
-      .. "result is: \n"
-      .. vim.inspect(result or "result could not be read correctly")
-  )
+  -- M.notify(
+  --   "handling workspaceLoad response\n"
+  --     .. "result is: \n"
+  --     .. vim.inspect(result or "result could not be read correctly")
+  -- )
   if result then
+    -- M.notify(
+    --   "handling workspaceLoad response\n"
+    --     .. "result is: \n"
+    --     .. vim.inspect(result or "result could not be read correctly")
+    -- )
     local resultContent = result.content
     if resultContent ~= nil then
       local content = vim.json.decode(resultContent)
@@ -834,8 +842,8 @@ M["fsharp/workspacePeek"] = function(error, result, context, config)
     local resultContent = result.content
     M.notify(
       "handling workspacePeek response\n"
-        .. "result is: \n"
-        .. vim.inspect(resultContent or "result.content could not be read correctly")
+      -- .. "result is: \n"
+      -- .. vim.inspect(resultContent or "result.content could not be read correctly")
     )
     ---@type Solution []
     local solutions = {}
@@ -1009,12 +1017,17 @@ end
 
 function M.CreateHandlers()
   local h = {
-    "fsharp/notifyWorkspace",
-    "fsharp/documentationSymbol",
+    -- "fsharp/signature",
+    -- "fsharp/signatureData",
+    -- "fsharp/lineLens",
+    "fsharp/compilerLocation",
+    -- "fsharp/compile",
     "fsharp/workspacePeek",
     "fsharp/workspaceLoad",
-    "fsharp/compilerLocation",
-    "fsharp/signature",
+    -- "fsharp/notifyWorkspace",
+    -- "fsharp/project",
+    -- "fsharp/documentation",
+    "fsharp/documentationSymbol",
     "textDocument/hover",
     "textDocument/documentHighlight",
   }
@@ -1028,7 +1041,8 @@ function M.CreateHandlers()
       elseif method == "textDocument/hover" then
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
       else
-        M[method](params)
+        M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
+        -- M[method](params)
       end
     end
   end
@@ -1096,7 +1110,7 @@ end
 ---@param path string
 ---@return lsp.TextDocumentIdentifier
 function M.TextDocumentIdentifier(path)
-  local is_windows = vim.loop.os_uname().version:match("Windows")
+  local is_windows = vim.uv.os_uname().version:match("Windows")
   local usr_ss_opt
   if is_windows then
     usr_ss_opt = vim.o.shellslash
@@ -1113,7 +1127,9 @@ function M.TextDocumentIdentifier(path)
   end
   ---
   ---@type lsp.TextDocumentIdentifier
-  return { Uri = uri }
+  return {
+    uri = uri,
+  }
 end
 
 ---Creates an lsp.Position from a line and character number
@@ -1193,7 +1209,6 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.Call(method, params, handler)
-  ---@type lsp-handler
   handler = handler or M.Handlers[method]
   return lsp.buf_request(0, method, params, handler)
 end
@@ -1236,7 +1251,6 @@ end
 
 ---Calls "fsharp/compile" on the given project file
 ---@param projectPath string
----@return nil
 ---@return table<integer, integer>, fun() 2-tuple:
 ---  - Map of client-id:request-id pairs for all successful requests.
 ---  - Function which can be used to cancel all the requests. You could instead
@@ -1249,7 +1263,6 @@ end
 ---@param directoryPath string
 ---@param depth integer
 ---@param excludedDirs string[]
----@return nil
 ---@return table<integer, integer>, fun() 2-tuple:
 ---  - Map of client-id:request-id pairs for all successful requests.
 ---  - Function which can be used to cancel all the requests. You could instead
@@ -1270,7 +1283,6 @@ end
 
 ---Call to "fsharp/workspaceLoad"
 ---@param projectFiles string[]  a string list of project files.
----@return nil
 ---@return table<integer, integer>, fun() 2-tuple:
 ---  - Map of client-id:request-id pairs for all successful requests.
 ---  - Function which can be used to cancel all the requests. You could instead
@@ -1281,13 +1293,13 @@ end
 
 ---call to "fsharp/project" - which, after using projectPath to create an FSharpProjectParms, loads given project
 ---@param projectPath string
----@return nil
 ---@return table<integer, integer>, fun() 2-tuple:
 ---  - Map of client-id:request-id pairs for all successful requests.
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpProject(projectPath, handler)
-  return M.Call("fsharp/project", M.CreateFSharpProjectParams(projectPath), handler)
+  local p = M.CreateFSharpProjectParams(projectPath)
+  return M.Call("fsharp/project", p, handler)
 end
 
 ---@return table<integer, integer>, fun() 2-tuple:
@@ -1312,7 +1324,6 @@ end
 ---@param filePath string
 ---@param line integer
 ---@param character integer
----@return nil
 ---@return table<integer, integer>, fun() 2-tuple:
 ---  - Map of client-id:request-id pairs for all successful requests.
 ---  - Function which can be used to cancel all the requests. You could instead
@@ -1325,7 +1336,6 @@ end
 ---creates a DocumentationForSymbolRequest then sends that request to FSAC
 ---@param xmlSig string
 ---@param assembly string
----@return nil
 ---@return table<integer, integer>, fun() 2-tuple:
 ---  - Map of client-id:request-id pairs for all successful requests.
 ---  - Function which can be used to cancel all the requests. You could instead
@@ -1386,7 +1396,7 @@ function M.OnFSProjSave()
 end
 
 function M.ShowIonideClientWorkspaceFolders()
-  ---@type lsp.Client|nil
+  ---@type vim.lsp.Client|nil
   local client = M.getIonideClientAttachedToCurrentBufferOrFirstInActiveClients()
   if client then
     local folders = client.workspace_folders or {}
@@ -1433,7 +1443,6 @@ function M.RegisterAutocmds()
       if codelensConfig.references.enabled == true or codelensConfig.signature.enabled == true then
         vim.defer_fn(function()
           vim.lsp.codelens.clear()
-          vim.lsp.codelens.refresh()
           vim.lsp.codelens.refresh()
           -- M.notify("lsp codelens refreshing")
         end, 7000)
