@@ -6,6 +6,174 @@ local autocmd = vim.api.nvim_create_autocmd
 local grp = vim.api.nvim_create_augroup
 -- local plenary = require("plenary")
 
+--  from https://github.com/seblj/roslyn.nvim/blob/main/lua/roslyn/
+--- Searches for files with a specific extension within a directory.
+--- Only files matching the provided extension are returned.
+---
+--- @param dir string The directory path for the search.
+--- @param extension string The file extension to look for (e.g., ".sln").
+---
+--- @return string[] List of file paths that match the specified extension.
+local function find_files_with_extension(dir, extension)
+  local matches = {}
+
+  for entry, type in vim.fs.dir(dir) do
+    if type == "file" and vim.endswith(entry, extension) then
+      matches[#matches + 1] = vim.fs.normalize(vim.fs.joinpath(dir, entry))
+    end
+  end
+
+  return matches
+end
+
+local M = {}
+
+---@class NvimDirectoryWithFiles
+---@field directory string
+---@field files string[]
+
+---Gets the root directory of the first project file and find all related project file to that directory
+---@param buffer integer
+---@return NvimDirectoryWithFiles?
+function M.get_project_files(buffer)
+  local directory = vim.fs.root(buffer, function(name)
+    return name:match("%.fsproj$") ~= nil
+  end)
+
+  if not directory then
+    return nil
+  end
+
+  local files = vim.fs.find(function(name, _)
+    return name:match("%.fsproj$")
+  end, { path = directory, limit = math.huge })
+
+  return {
+    directory = directory,
+    files = files,
+  }
+end
+
+--- Attempts to find `.csproj` files in the current working directory (CWD).
+--- This function searches recursively through the files in the CWD.
+--- If a `.csproj` file is found, it returns the directory path and a list of matching files.
+--- If no `.csproj` files are found or the file is outside the CWD, `nil` is returned.
+--- Falls back to normal behavior for checking solution and project files if no match is found.
+---
+--- @return NvimDirectoryWithFiles? A table containing the directory path and a list of found `.csproj` files, or `nil` if none are found.
+function M.try_get_fsproj_files()
+  local cwd = assert(vim.uv.cwd())
+
+  local fsprojs = find_files_with_extension(cwd, ".fsproj")
+
+  local solutions = find_files_with_extension(cwd, ".sln")
+
+  if #fsprojs > 0 and #solutions == 0 then
+    return {
+      directory = cwd,
+      files = fsprojs,
+    }
+  end
+
+  return nil
+end
+
+---Find the solution file from the current buffer.
+---Recursively see if we have any other solution files, to potentially
+---give the user an option to choose which solution file to use
+
+---Broad search will search from the root directory and down to potentially
+---find sln files that is not in the root directory.
+---This could potentially be slow, so by default it is off
+
+---@param buffer integer
+---@param broad_search boolean
+---@return string[]?
+function M.get_solution_files(buffer, broad_search)
+  local directory = vim.fs.root(buffer, function(name)
+    return name:match("%.sln$") ~= nil
+  end)
+
+  if not directory then
+    return nil
+  end
+
+  if broad_search then
+    return vim.fs.find(function(name, _)
+      return name:match("%.sln$")
+    end, { type = "file", limit = math.huge, path = directory })
+  else
+    return find_files_with_extension(directory, ".sln")
+  end
+end
+
+--- Find a path to sln file that is likely to be the one that the current buffer
+--- belongs to. Ability to predict the right sln file automates the process of starting
+--- LSP, without requiring the user to invoke CSTarget each time the solution is open.
+--- The prediction assumes that the nearest fsproj file (in one of parent dirs from buffer)
+--- should be a part of the sln file that the user intended to open.
+---@param buffer integer
+---@param sln_files string[]
+---@return string?
+function M.predict_sln_file(buffer, sln_files)
+  local fsproj = M.get_project_files(buffer)
+  if not fsproj or #fsproj.files > 1 then
+    return nil
+  end
+
+  local fsproj_filename = vim.fn.fnamemodify(fsproj.files[1], ":t")
+
+  -- Look for a solution file that contains the name of the project
+  -- Predict that to be the "correct" solution file if we find the project name
+  for _, file_path in ipairs(sln_files) do
+    local file = io.open(file_path, "r")
+
+    if not file then
+      return nil
+    end
+
+    local content = file:read("*a")
+    file:close()
+
+    if content:find(fsproj_filename, 1, true) then
+      return file_path
+    end
+  end
+
+  return nil
+end
+
+---@class InternalIonideNvimConfig
+---@field exe? string|string[]
+---@field config vim.lsp.ClientConfig
+---@field choose_sln? fun(solutions: string[]): string?
+---@field broad_search boolean
+
+---@class IonideNvimConfig
+---@field exe? string|string[]
+---@field config? vim.lsp.ClientConfig
+---@field choose_sln? fun(solutions: string[]): string?
+---@field broad_search? boolean
+
+-- If we only have one solution file, then use that.
+-- If the user have provided a hook to select a solution file, use that
+-- If not, we must have multiple, and we try to predict the correct solution file
+---@param bufnr number
+---@param sln string[]
+---@param roslyn_config InternalIonideNvimConfig
+local function get_sln_file(bufnr, sln, roslyn_config)
+  if #sln == 1 then
+    return sln[1]
+  end
+
+  local chosen = roslyn_config.choose_sln and roslyn_config.choose_sln(sln)
+  if chosen then
+    return chosen
+  end
+
+  return M.predict_sln_file(bufnr, sln)
+end
+
 local function tryRequire(...)
   local status, lib = pcall(require, ...)
   if status then
@@ -54,8 +222,6 @@ end
 local function stringEndsWith(s, suffix)
   return s:sub(-#suffix) == suffix
 end
-
-local M = {}
 
 function M.notify(msg, level, opts)
   local safeMessage = "[Ionide] - "
@@ -155,7 +321,7 @@ end
 M.getIonideClientAttachedToCurrentBufferOrFirstInActiveClients = function()
   local bufnr = vim.api.nvim_get_current_buf()
   -- local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
-  -- local projectRoot = vim.fs.normalize(M.GitFirstRootDir(bufname))
+  local projectRoot = vim.fs.normalize(M.GitFirstRootDir(bufname))
   local ionideClientsList = vim.lsp.get_clients({ name = "ionide" })
   if ionideClientsList then
     if #ionideClientsList > 1 then
@@ -491,11 +657,29 @@ M.DefaultNvimSettings = {
 }
 
 function M.GitFirstRootDir(n)
+  vim.notify("finding root for : " .. vim.inspect(n))
   local root
-  root = util.find_git_ancestor(n)
   root = root or util.root_pattern("*.sln")(n)
+  if root then
+    vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
   root = root or util.root_pattern("*.fsproj")(n)
+  if root then
+    vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
   root = root or util.root_pattern("*.fsx")(n)
+  if root then
+    vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
+  root = util.find_git_ancestor(n)
+  if root then
+    vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
+  vim.notify("root is : " .. vim.inspect(root))
   return root
 end
 
@@ -736,6 +920,7 @@ M["fsharp/showDocumentation"] = function(error, result, context, config)
     end
   end
 end
+
 M["fsharp/documentationSymbol"] = function(error, result, context, config)
   -- M.notify(
   --   "handling "
@@ -750,15 +935,15 @@ M["fsharp/documentationSymbol"] = function(error, result, context, config)
   end
 end
 
-M["fsharp/notifyWorkspace"] = function(payload)
-  M.notify("handling notifyWorkspace")
-  -- M.notify(vim.inspect(payload))
+M["fsharp/notifyWorkspace"] = function(err, params, ctx, config)
+  -- M.notify("handling notifyWorkspace")
+  -- M.notify(vim.inspect(params))
 
-  local content = vim.json.decode(payload.content or "{}")
-  if content then
-    M.notify("notifyWorkspace Decoded content is : \n" .. vim.inspect(content))
+  local content = vim.json.decode(params.content or "{}")
+  if content ~= vim.empty_dict() then
+    -- M.notify("notifyWorkspace Decoded content is : \n" .. vim.inspect(content))
     if content.Kind == "projectLoading" then
-      M.notify("Loading " .. vim.fs.normalize(content.Data.Project))
+      -- M.notify("Loading " .. vim.fs.normalize(content.Data.Project))
       -- M.notify("now calling AddOrUpdateThenSort on table  " .. vim.inspect(Workspace))
       --
       table.insert(M.Projects, content.Data.Project)
@@ -767,18 +952,24 @@ M["fsharp/notifyWorkspace"] = function(payload)
     elseif content.Kind == "project" then
       local k = content.Data.Project
       local projInfo = {}
-      projInfo[k] = content.Data
+      projInfo[k] = content.Data.Project
+      vim.notify("Adding project " .. vim.inspect(content.Data.Project))
 
       M.Projects = vim.tbl_deep_extend("force", M.Projects, projInfo)
     elseif content.Kind == "workspaceLoad" and content.Data.Status == "finished" then
       M.notify("content.Kind was workspaceLoad and content.Data.Status was finished")
       -- M.notify("calling updateServerConfig ... ")
-      -- M.notify("before calling updateServerconfig, workspace looks like:   " .. vim.inspect(Workspace))
+
+      -- M.notify("projects look like: " .. vim.inspect(M.Projects))
 
       for proj, projInfoData in pairs(M.Projects) do
-        local dir = vim.fs.dirname(proj)
+        local dir = vim.fs.normalize(vim.fs.dirname(vim.inspect(projInfoData)))
+
+        -- M.notify("project dir: " .. vim.inspect(dir))
         if vim.tbl_contains(M.projectFolders, dir) then
         else
+          -- M.notify("Adding project folder " .. vim.inspect(dir))
+
           table.insert(M.projectFolders, dir)
         end
       end
@@ -794,8 +985,8 @@ M["fsharp/notifyWorkspace"] = function(payload)
         else
           M.notify("Loaded 1 project:")
         end
-        for _, projName in pairs(projNames) do
-          M.notify("Loaded " .. vim.fs.normalize(vim.inspect(projName)))
+        for projName, _ in pairs(projNames) do
+          -- M.notify("Loaded " .. vim.fs.normalize(vim.inspect(projName)))
         end
       else
         M.notify("Workspace is empty! Something went wrong. ")
@@ -812,12 +1003,13 @@ M["fsharp/notifyWorkspace"] = function(payload)
   end
 end
 
-M["fsharp/workspaceLoad"] = function(result)
-  -- M.notify(
-  --   "handling workspaceLoad response\n"
-  --     .. "result is: \n"
-  --     .. vim.inspect(result or "result could not be read correctly")
-  -- )
+M["fsharp/workspaceLoad"] = function(err, params, ctx, config)
+  local result = { err, params, ctx, config }
+  M.notify(
+    "handling workspaceLoad response\n"
+      .. "result is: \n"
+      .. vim.inspect(result or "result could not be read correctly")
+  )
   if result then
     -- M.notify(
     --   "handling workspaceLoad response\n"
@@ -903,7 +1095,42 @@ M["fsharp/workspacePeek"] = function(error, result, context, config)
                       return vim.fn.fnamemodify(vim.fs.normalize(item.Data.Path), ":p:.")
                     end,
                   }, function(_, index)
+                    vim.notify("index is " .. index)
                     finalChoice = solutions[index]
+
+                    local finalPath = vim.fs.normalize(finalChoice.Data.Path)
+                    M.notify("Loading solution : " .. vim.fn.fnamemodify(vim.fs.normalize(finalPath), ":p:."))
+
+                    ---@type string[]
+                    local pathsToLoad = {}
+                    local projects = finalChoice.Data.Items
+                    for _, project in ipairs(projects) do
+                      if project.Name:match("sproj") then
+                        table.insert(pathsToLoad, vim.fs.normalize(project.Name))
+                      end
+                    end
+
+                    M.notify("Going to ask FsAutoComplete to load these project paths.. " .. vim.inspect(pathsToLoad))
+                    local projectParams = {}
+                    for _, path in ipairs(pathsToLoad) do
+                      table.insert(projectParams, M.CreateFSharpProjectParams(path))
+                    end
+                    M.MergedConfig =
+                      vim.tbl_deep_extend("force", M.MergedConfig, { root_dir = vim.fs.dirname(finalPath) })
+                    vim.notify("MergedConfig.root_dir is " .. vim.inspect(M.MergedConfig.root_dir))
+
+                    M.setup(M.MergedConfig)
+                    M.CallFSharpWorkspaceLoad(pathsToLoad)
+                    for _, proj in ipairs(projectParams) do
+                      vim.lsp.buf_request(0, "fsharp/project", { proj }, function(payload)
+                        M.notify(
+                          "fsharp/project load request has a payload of :  "
+                            .. vim.inspect(payload or "No Result from Server")
+                        )
+                      end)
+                    end
+
+                    vim.notify("finalChoice is " .. vim.inspect(finalChoice))
                   end)
                 else
                   finalChoice = solutions[1]
@@ -920,29 +1147,6 @@ M["fsharp/workspacePeek"] = function(error, result, context, config)
                       },
                     },
                   }
-                local finalPath = vim.fs.normalize(finalChoice.Data.Path)
-                M.notify("Loading solution : " .. vim.fn.fnamemodify(vim.fs.normalize(finalPath), ":p:."))
-
-                ---@type string[]
-                local pathsToLoad = {}
-                local projects = finalChoice.Data.Items
-                for _, project in ipairs(projects) do
-                  if project.Name:match("sproj") then
-                    table.insert(pathsToLoad, vim.fs.normalize(project.Name))
-                  end
-                end
-
-                M.notify("Going to ask FsAutoComplete to load these project paths.. " .. vim.inspect(pathsToLoad))
-                local projectParams = {}
-                for _, path in ipairs(pathsToLoad) do
-                  table.insert(projectParams, M.CreateFSharpProjectParams(path))
-                end
-                M.CallFSharpWorkspaceLoad(pathsToLoad)
-                for _, proj in ipairs(projectParams) do
-                  vim.lsp.buf_request(0, "fsharp/project", { proj }, function(payload)
-                    -- M.notify("fsharp/project load request has a payload of :  " .. vim.inspect( payload or "No Result from Server"))
-                  end)
-                end
 
                 -- if solutionToLoad ~= nil then
                 --   M.notify("solutionToLoad is set to " ..
@@ -1024,7 +1228,7 @@ function M.CreateHandlers()
     -- "fsharp/compile",
     "fsharp/workspacePeek",
     "fsharp/workspaceLoad",
-    -- "fsharp/notifyWorkspace",
+    "fsharp/notifyWorkspace",
     -- "fsharp/project",
     -- "fsharp/documentation",
     "fsharp/documentationSymbol",
@@ -1077,6 +1281,7 @@ M.DefaultLspConfig = {
   end,
   settings = { FSharp = M.DefaultServerSettings },
   root_dir = M.GitFirstRootDir,
+
   log_level = lsp.protocol.MessageType.Warning,
   message_level = lsp.protocol.MessageType.Warning,
   capabilities = lsp.protocol.make_client_capabilities(),
@@ -1364,8 +1569,12 @@ function M.LoadProjects(projects)
 end
 
 function M.ShowLoadedProjects()
+  M.notify("Loaded Projects:")
+
+  -- M.notify("- " .. vim.inspect(M.Projects))
+
   for proj, projInfo in pairs(M.Projects) do
-    M.notify("- " .. vim.fs.normalize(proj))
+    M.notify("- " .. vim.fs.normalize(vim.inspect(proj)))
   end
 end
 
@@ -1548,6 +1757,7 @@ function M.Initialize()
   ---@type vim.lsp.Client
   local thisIonide = vim.lsp.get_clients({ bufnr = thisBufnr, name = "ionide" })[1]
     or { workspace_folders = { { name = vim.fn.getcwd() } } }
+  vim.notify("Ionide Client workspace folders: " .. vim.inspect(thisIonide.workspace_folders))
 
   local thisBufIonideRootDir = thisIonide.workspace_folders[1].name -- or vim.fn.getcwd()
   M.CallFSharpWorkspacePeek(
@@ -2489,7 +2699,7 @@ uc("IonideWorkspacePeek", function()
   end
   M.CallFSharpWorkspacePeek(
     M.getIonideClientConfigRootDirOrCwd(),
-    settingsFSharp.workspaceModePeekDeepLevel or 3,
+    settingsFSharp.workspaceModePeekDeepLevel or 6,
     settingsFSharp.excludeProjectDirectories or {}
   )
 end, { desc = "Request a workspace peek from Lsp" })
