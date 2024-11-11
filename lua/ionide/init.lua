@@ -321,7 +321,7 @@ end
 M.getIonideClientAttachedToCurrentBufferOrFirstInActiveClients = function()
   local bufnr = vim.api.nvim_get_current_buf()
   -- local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
-  local projectRoot = vim.fs.normalize(M.GitFirstRootDir(bufname))
+  -- local projectRoot = vim.fs.normalize(M.GitFirstRootDir(bufname))
   local ionideClientsList = vim.lsp.get_clients({ name = "ionide" })
   if ionideClientsList then
     if #ionideClientsList > 1 then
@@ -877,13 +877,6 @@ end
 --
 --- Handlers ---
 
---see: https://microsoft.github.io/language-server-protocol/specifications/specification-current/#textDocument_documentHighlight
-M["textDocument/documentHighlight"] = function(error, result, context, config)
-  if result then
-    vim.lsp.handlers["textDocument/documentHighlight"](error, result, context, config)
-  end
-end
-
 M["textDocument/hover"] = function(error, result, context, config)
   -- M.notify(
   --   "handling "
@@ -938,55 +931,99 @@ end
 M["fsharp/notifyWorkspace"] = function(err, params, ctx, config)
   -- M.notify("handling notifyWorkspace")
   -- M.notify(vim.inspect(params))
+  -- if err then
+  -- if err then
+  --   M.notify("Error in notifyWorkspace: " .. vim.inspect(error))
+  -- end
+  -- if ctx then
+  --   M.notify("ctx: " .. vim.inspect(ctx))
+  -- end
+  if config then
+    M.notify("config: " .. vim.inspect(config))
+  end
+  -- end
+  -- M.notify(vim.inspect(err))
 
   local content = vim.json.decode(params.content or "{}")
   if content ~= vim.empty_dict() then
-    -- M.notify("notifyWorkspace Decoded content is : \n" .. vim.inspect(content))
+    -- M.notify("notifyWorkspace Decoded contentKind is : " .. vim.inspect(content.Kind))
     if content.Kind == "projectLoading" then
-      -- M.notify("Loading " .. vim.fs.normalize(content.Data.Project))
+      local proj = vim.fs.normalize(content.Data.Project)
+      M.notify("projectLoading notify, adding to local projectFolders collection " .. proj)
+      -- M.notify("Data:  " .. vim.inspect(content.Data))
+      local dir = vim.fs.dirname(proj)
+      -- M.notify("dir: " .. dir)
       -- M.notify("now calling AddOrUpdateThenSort on table  " .. vim.inspect(Workspace))
       --
-      table.insert(M.Projects, content.Data.Project)
-      -- -- local dir = vim.fs.dirname(content.Data.Project)
+      -- M.projectFolders = vim.tbl_deep_extend("force", M.projectFolders, { dir })
+      table.insert(M.projectFolders, dir)
+
+      -- M.notify("ProjectFolders :  " .. vim.inspect(M.projectFolders))
+      -- table.insert(M.Projects, content.Data.Project)
+      -- M.Projects = vim.tbl_deep_extend("force", M.Projects, { proj })
+
+      -- M.notify("Projects :  " .. vim.inspect(M.Projects))
+      -- table.insert(M.Projects, content.Data.Project)
       -- M.notify("after attempting to reassign table value it looks like this : " .. vim.inspect(Workspace))
     elseif content.Kind == "project" then
+      -- vim.notify("Adding project " .. vim.inspect(content))
       local k = content.Data.Project
+      M.notify("Adding project " .. k)
+      -- M.notify("projects look like: " .. vim.inspect(M.Projects))
       local projInfo = {}
-      projInfo[k] = content.Data.Project
-      vim.notify("Adding project " .. vim.inspect(content.Data.Project))
+      projInfo[k] = content.Data
+      -- M.notify("projInfo looks like: " .. vim.inspect(projInfo))
 
+      -- local kvp = { k, content.Data }
+      -- M.notify("Adding project " .. vim.inspect(content.Data.Project))
+
+      -- M.Projects = vim.tbl_deep_extend("force", M.Projects, kvp)
       M.Projects = vim.tbl_deep_extend("force", M.Projects, projInfo)
+      -- M.notify("projects look like: " .. vim.inspect(M.Projects))
+      -- table.insert(M.Project, kvp)
+
+      -- M.notify("Projects :  " .. vim.inspect(M.Projects))
     elseif content.Kind == "workspaceLoad" and content.Data.Status == "finished" then
-      M.notify("content.Kind was workspaceLoad and content.Data.Status was finished")
+      -- M.notify("content.Kind was workspaceLoad and content.Data.Status was finished")
+      -- M.notify("workspaceLoad content after finish: " .. vim.inspect(content))
       -- M.notify("calling updateServerConfig ... ")
 
       -- M.notify("projects look like: " .. vim.inspect(M.Projects))
 
-      for proj, projInfoData in pairs(M.Projects) do
-        local dir = vim.fs.normalize(vim.fs.dirname(vim.inspect(projInfoData)))
+      for key, projInfoData in pairs(M.Projects) do
+        local proj = vim.fs.normalize(key)
+        -- M.notify("Loading " .. proj)
+        -- local dir = vim.fs.normalize(vim.fs.dirname(vim.inspect(projInfoData)))
+        local dir = vim.fs.dirname(proj)
+        -- M.notify("dir: " .. dir)
 
-        -- M.notify("project dir: " .. vim.inspect(dir))
         if vim.tbl_contains(M.projectFolders, dir) then
         else
-          -- M.notify("Adding project folder " .. vim.inspect(dir))
+          M.notify("Adding project folder " .. vim.inspect(dir))
 
           table.insert(M.projectFolders, dir)
         end
       end
+      M.notify("ProjectFolders :  " .. vim.inspect(M.projectFolders))
+      -- M.notify("Projects :  " .. vim.inspect(M.Projects))
       -- M.notify("after calling updateServerconfig, workspace looks like:   " .. vim.inspect(Workspace))
       local projectCount = vim.tbl_count(M.Projects)
       if projectCount > 0 then
         local lsputil = require("vim.lsp.util")
-        local projNames = lsputil.convert_input_to_markdown_lines(vim.tbl_map(function(s)
-          return vim.fn.fnamemodify(s, ":P:.")
-        end, vim.tbl_keys(M.Projects)))
+        local projNames = {}
+        for key, value in pairs(M.Projects) do
+          table.insert(projNames, key)
+        end
+        -- local projNames = lsputil.convert_input_to_markdown_lines(vim.tbl_map(function(s)
+        --   return vim.fn.fnamemodify(s, ":P:.")
+        -- end, vim.tbl_keys(M.Projects)))
         if projectCount > 1 then
           M.notify("Loaded " .. projectCount .. " projects:")
         else
           M.notify("Loaded 1 project:")
         end
-        for projName, _ in pairs(projNames) do
-          -- M.notify("Loaded " .. vim.fs.normalize(vim.inspect(projName)))
+        for index, projName in pairs(projNames) do
+          M.notify("" .. projName)
         end
       else
         M.notify("Workspace is empty! Something went wrong. ")
@@ -1019,7 +1056,7 @@ M["fsharp/workspaceLoad"] = function(err, params, ctx, config)
     local resultContent = result.content
     if resultContent ~= nil then
       local content = vim.json.decode(resultContent)
-      M.notify("json decode of payload content : " .. vim.inspect(content or "not decoded"))
+      -- M.notify("json decode of payload content : " .. vim.inspect(content or "not decoded"))
       if content then
         -- M.notify( "Ionide Workspace Load Status: "
         --  ..  vim.inspect(content.Status or "result.content could not be read correctly")
@@ -1030,39 +1067,48 @@ M["fsharp/workspaceLoad"] = function(err, params, ctx, config)
 end
 
 M["fsharp/workspacePeek"] = function(error, result, context, config)
+  if error then
+    M.notify("Error in notifyWorkspace: " .. vim.inspect(error))
+  end
+  if config then
+    M.notify("config: " .. vim.inspect(config))
+  end
   if result then
     local resultContent = result.content
     M.notify(
       "handling workspacePeek response\n"
       -- .. "result is: \n"
-      -- .. vim.inspect(resultContent or "result.content could not be read correctly")
+      -- .. vim.inspect(result.content or "result.content could not be read correctly")
     )
     ---@type Solution []
     local solutions = {}
     local directory
     if resultContent ~= nil then
+      -- M.notify("projects look like: " .. vim.inspect(M.Projects))
       local content = vim.json.decode(resultContent)
-      -- M.notify("json decode of payload content : ".. vim.inspect(content or "not decoded"))
+      -- M.notify("json decode of payload content : " .. vim.inspect(content or "not decoded"))
       if content then
-        -- M.notify("json decode of payload content successful")
+        M.notify("json decode of payload content successful, the kind is " .. vim.inspect(content.Kind))
         local kind = content.Kind
         if kind and kind == "workspacePeek" then
           -- M.notify("workspace peek is content kind")
           local data = content.Data
           if data ~= nil then
-            -- M.notify("Data not null")
+            M.notify("Data not null")
             local found = data.Found
             if found ~= nil then
-              -- M.notify("data.Found not null")
+              M.notify("data.Found not null")
 
               ---@type Project[]
               local projects = {}
               for _, item in ipairs(found) do
                 if item.Type == "solution" then
                   table.insert(solutions, item)
+                  M.notify("Solution found in workspacePeek: " .. vim.inspect(item.Path))
                 elseif item.Type == "directory" then
                   directory = vim.fs.normalize(item.Data.Directory)
                 elseif item.Kind.Kind == "msbuildformat" then
+                  M.notify("MSBuildFormat found in workspacePeek: " .. vim.inspect(item))
                   table.insert(projects, item)
                 else -- else left in case I want some other type to be dealt with..
                   M.notify("Unaccounted for item type in workspacePeek handler, " .. item.Type)
@@ -1070,16 +1116,10 @@ M["fsharp/workspacePeek"] = function(error, result, context, config)
               end
               local cwd = vim.fs.normalize(vim.fn.getcwd())
               if directory == cwd then
-                -- M.notify("WorkspacePeek directory \n"
-                --   ..
-                --   directory
-                --   ..
-                --   "\nEquals current working directory\n"
-                --   .. cwd
-                -- )
+                M.notify("WorkspacePeek directory \n" .. directory .. "\nEquals current working directory\n" .. cwd)
               else
                 M.notify(
-                  "WorkspacePeek directory \n" .. directory .. "Does not equal current working directory\n" .. cwd
+                  "WorkspacePeek directory \n" .. directory .. " Does not equal current working directory\n" .. cwd
                 )
               end
               -- local solutionToLoad
@@ -1185,6 +1225,14 @@ M["fsharp/compilerLocation"] = function(error, result, context, config)
   )
 end
 
+M["fsharp/project"] = function(error, result, context, config)
+  M.notify(
+    "handling project response\n"
+      .. "result is: \n"
+      .. vim.inspect({ error or "", result or "", context or "", config or "" })
+  )
+end
+
 M["workspace/workspaceFolders"] = function(error, result, context, config)
   if result then
     M.notify(
@@ -1229,11 +1277,12 @@ function M.CreateHandlers()
     "fsharp/workspacePeek",
     "fsharp/workspaceLoad",
     "fsharp/notifyWorkspace",
-    -- "fsharp/project",
+    "fsharp/project",
+    "workspace/workspaceFolders",
+
     -- "fsharp/documentation",
     "fsharp/documentationSymbol",
     "textDocument/hover",
-    "textDocument/documentHighlight",
   }
   local r = {}
   for _, method in ipairs(h) do
@@ -1242,10 +1291,14 @@ function M.CreateHandlers()
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
       elseif method == "fsharp/documentationSymbol" then
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
+      elseif method == "fsharp/workspacePeek" then
+        M[method](err, params or nil, ctx, config)
+      elseif method == "fsharp/notifyWorkspace" then
+        M[method](err or nil, params or nil, ctx, config)
       elseif method == "textDocument/hover" then
         M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
       else
-        M[method](err or "No Error", params or "No Params", ctx or "No Context", config or "No Configs")
+        M[method](err, params or "No Params", ctx or "No Context", config or "No Configs")
         -- M[method](params)
       end
     end
@@ -1321,7 +1374,9 @@ function M.TextDocumentIdentifier(path)
     usr_ss_opt = vim.o.shellslash
     vim.o.shellslash = true
   end
-  local uri = vim.fn.fnamemodify(path, ":p")
+  vim.notify("path: " .. path)
+  local uri = vim.fn.fnamemodify(vim.fs.normalize(path), ":p")
+  vim.notify("uri: " .. uri)
   if string.sub(uri, 1, 1) == "/" then
     uri = "file://" .. uri
   else
@@ -1361,8 +1416,11 @@ end
 ---@param projectUri string
 ---@return FSharpProjectParams
 function M.CreateFSharpProjectParams(projectUri)
+  local tdi = M.TextDocumentIdentifier(projectUri)
+  vim.notify("projectUri: " .. vim.inspect(tdi))
   return {
-    Project = M.TextDocumentIdentifier(projectUri),
+
+    Project = tdi,
   }
 end
 
@@ -1493,6 +1551,7 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpWorkspaceLoad(projectFiles, handler)
+  vim.notify("Loading workspace " .. vim.inspect(projectFiles))
   return M.Call("fsharp/workspaceLoad", M.CreateFSharpWorkspaceLoadParams(projectFiles), handler)
 end
 
@@ -1503,6 +1562,7 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpProject(projectPath, handler)
+  vim.notify("Loading project " .. vim.inspect(projectPath))
   local p = M.CreateFSharpProjectParams(projectPath)
   return M.Call("fsharp/project", p, handler)
 end
@@ -1574,7 +1634,7 @@ function M.ShowLoadedProjects()
   -- M.notify("- " .. vim.inspect(M.Projects))
 
   for proj, projInfo in pairs(M.Projects) do
-    M.notify("- " .. vim.fs.normalize(vim.inspect(proj)))
+    M.notify("- " .. vim.fs.normalize(vim.inspect(projInfo)))
   end
 end
 
@@ -2666,23 +2726,24 @@ uc("IonideResetFSI", M.ResetFsi, { desc = "Ionide - Reset FSharp Interactive" })
 
 uc("IonideShowConfigs", M.ShowConfigs, { desc = "Shows the merged config." })
 uc("IonideShowWorkspaceFolders", M.ShowIonideClientWorkspaceFolders, {})
-uc("IonideLoadProjects", function(opts)
-  if type(opts.fargs) == "string" then
-    local projTable = { opts.fargs }
-    M.LoadProjects(projTable)
-  elseif type(opts.fargs) == "table" then
-    local projects = opts.fargs
-    M.LoadProjects(projects)
-  elseif opts.nargs > 1 then
+
+uc(
+  "IonideLoadProjects",
+  ---Load projects
+  ---@param opts  vim.api.keyset.user_command
+  function(opts)
+    vim.notify("IonideLoadProjects opts: " .. vim.inspect(opts))
     local projects = {}
     for _, proj in ipairs(opts.fargs) do
+      proj = proj:gsub('"', "")
+      vim.notify("IonideLoadProjects attempting to load proj: " .. vim.inspect(proj))
+
       table.insert(projects, proj)
     end
     M.LoadProjects(projects)
-  else
-    M.notify(opts)
-  end
-end, {})
+  end,
+  {}
+)
 
 uc("IonideShowLoadedProjects", M.ShowLoadedProjects, { desc = "Shows just the project names that have been loaded." })
 uc("IonideShowNvimSettings", M.ShowNvimSettings, {})
