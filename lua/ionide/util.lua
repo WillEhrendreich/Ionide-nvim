@@ -9,11 +9,10 @@ local fn = vim.fn
 
 local M = {}
 
-
 function M.validate_bufnr(bufnr)
-  validate {
+  validate({
     bufnr = { bufnr, "n" },
-  }
+  })
   return bufnr == 0 and api.nvim_get_current_buf() or bufnr
 end
 
@@ -48,7 +47,7 @@ function M.create_module_commands(module_name, commands)
     for k, v in pairs(def) do
       if type(k) == "string" and type(v) == "boolean" and v then
         table.insert(parts, "-" .. k)
-      elseif type(k) == "number" and type(v) == "string" and v:match "^%-" then
+      elseif type(k) == "number" and type(v) == "string" and v:match("^%-") then
         table.insert(parts, v)
       end
     end
@@ -73,7 +72,7 @@ end
 
 M.script_path = function()
   local str = debug.getinfo(2, "S").source:sub(2)
-  return str:match "(.*[/\\])"
+  return str:match("(.*[/\\])")
 end
 
 -- Some path utilities
@@ -91,13 +90,13 @@ M.path = (function()
     return exists(filename) == "file"
   end
 
-  local is_windows = uv.os_uname().version:match "Windows"
+  local is_windows = uv.os_uname().version:match("Windows")
   local path_sep = is_windows and "\\" or "/"
 
   local is_fs_root
   if is_windows then
     is_fs_root = function(path)
-      return path:match "^%a:$"
+      return path:match("^%a:$")
     end
   else
     is_fs_root = function(path)
@@ -107,9 +106,9 @@ M.path = (function()
 
   local function is_absolute(filename)
     if is_windows then
-      return filename:match "^%a:" or filename:match "^\\\\"
+      return filename:match("^%a:") or filename:match("^\\\\")
     else
-      return filename:match "^/"
+      return filename:match("^/")
     end
   end
 
@@ -130,7 +129,7 @@ M.path = (function()
   end
 
   local function path_join(...)
-    local result = table.concat(vim.tbl_flatten { ... }, path_sep):gsub(path_sep .. "+", path_sep)
+    local result = table.concat(vim.tbl_flatten({ ... }), path_sep):gsub(path_sep .. "+", path_sep)
     return result
   end
 
@@ -254,7 +253,7 @@ function M.server_per_root_dir_manager(_make_config)
 end
 
 function M.search_ancestors(startpath, func)
-  validate { func = { func, "f" } }
+  validate({ func = { func, "f" } })
   if func(startpath) then
     return startpath
   end
@@ -266,7 +265,7 @@ function M.search_ancestors(startpath, func)
 end
 
 function M.root_pattern(...)
-  local patterns = vim.tbl_flatten { ... }
+  local patterns = vim.tbl_flatten({ ... })
   local function matcher(path)
     for _, pattern in ipairs(patterns) do
       for _, p in ipairs(vim.fn.glob(M.path.join(path, pattern), true, true)) do
