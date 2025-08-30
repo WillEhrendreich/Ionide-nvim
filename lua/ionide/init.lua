@@ -895,6 +895,14 @@ M["textDocument/hover"] = function(error, result, context, config)
         result.content["message"] = ""
         M.notify("result.content.message is now: \n" .. vim.inspect(result.content.message))
       end
+
+      -- Process and replace documentation links in hover content
+      if result.content.value then
+        result.content.value = M._replace_documentation_links(result.content.value)
+      end
+      if result.content.message then
+        result.content.message = M._replace_documentation_links(result.content.message)
+      end
     end
     vim.lsp.handlers.hover(error or {}, result, context or {}, config or {})
   end
@@ -1372,22 +1380,22 @@ function M.TextDocumentIdentifier(path)
   -- Handle compatibility with different Neovim versions
   local uv = vim.uv or vim.loop
   local is_windows = false
-  
+
   if uv and uv.os_uname then
     is_windows = uv.os_uname().version:match("Windows") ~= nil
   else
     -- Fallback detection for test environments
     is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
   end
-  
+
   local usr_ss_opt
   if is_windows then
     usr_ss_opt = vim.o.shellslash
     vim.o.shellslash = true
   end
-  
+
   local uri = vim.fn.fnamemodify(vim.fs.normalize(path), ":p")
-  
+
   if string.sub(uri, 1, 1) == "/" then
     uri = "file://" .. uri
   else
@@ -1486,16 +1494,16 @@ function M.CallWithResilience(method, params, handler, opts)
   local max_retries = opts.retry_count or 3
   local timeout = opts.timeout or 10000 -- 10 seconds default
   local retry_delay = opts.retry_delay or 1000 -- 1 second delay between retries
-  
+
   local retries = 0
   local original_handler = handler or M.Handlers[method]
-  
+
   -- Check if any ionide clients are available (with safety check for test environment)
   local clients = {}
   if vim.lsp and vim.lsp.get_clients then
     clients = vim.lsp.get_clients({ name = "ionide" })
   end
-  
+
   if #clients == 0 and not opts.skip_client_check then
     local error_msg = "No ionide LSP clients available"
     if original_handler then
@@ -1505,42 +1513,55 @@ function M.CallWithResilience(method, params, handler, opts)
     end
     return {}, function() end
   end
-  
+
   local function resilient_handler(err, result, ctx, config)
     if err then
       -- Check if this is a retryable error
       local retryable_codes = { -32603, -32001, -32002, -32300 } -- Server error, timeout, etc.
       local is_retryable = vim.tbl_contains(retryable_codes, err.code or 0)
-      
+
       if is_retryable and retries < max_retries then
         retries = retries + 1
-        M.notify(string.format("LSP call failed (attempt %d/%d): %s. Retrying...", 
-          retries, max_retries + 1, err.message or "Unknown error"), vim.log.levels.WARN)
-        
+        M.notify(
+          string.format(
+            "LSP call failed (attempt %d/%d): %s. Retrying...",
+            retries,
+            max_retries + 1,
+            err.message or "Unknown error"
+          ),
+          vim.log.levels.WARN
+        )
+
         -- Retry after delay
         vim.defer_fn(function()
-          M.CallWithResilience(method, params, handler, 
-            vim.tbl_extend("force", opts, { retry_count = max_retries - retries }))
+          M.CallWithResilience(
+            method,
+            params,
+            handler,
+            vim.tbl_extend("force", opts, { retry_count = max_retries - retries })
+          )
         end, retry_delay)
         return
       else
         -- Max retries reached or non-retryable error
         if retries >= max_retries then
-          M.notify(string.format("LSP call failed after %d retries: %s", 
-            max_retries + 1, err.message or "Unknown error"), vim.log.levels.ERROR)
+          M.notify(
+            string.format("LSP call failed after %d retries: %s", max_retries + 1, err.message or "Unknown error"),
+            vim.log.levels.ERROR
+          )
         end
       end
     end
-    
+
     -- Call original handler
     if original_handler then
       original_handler(err, result, ctx, config)
     end
   end
-  
+
   -- Add timeout handling
   local request_ids, cancel_fn = lsp.buf_request(0, method, params, resilient_handler)
-  
+
   -- Set up timeout
   local timeout_timer = nil
   if vim.defer_fn then
@@ -1553,7 +1574,7 @@ function M.CallWithResilience(method, params, handler, opts)
       end
     end, timeout)
   end
-  
+
   -- Enhanced cancel function that also clears timeout
   local enhanced_cancel = function()
     if timeout_timer then
@@ -1568,7 +1589,7 @@ function M.CallWithResilience(method, params, handler, opts)
       cancel_fn()
     end
   end
-  
+
   return request_ids, enhanced_cancel
 end
 
@@ -1597,7 +1618,7 @@ function M.CallLspNotify(method, params)
       return
     end
   end
-  
+
   -- Wrap in pcall for error safety
   local ok, err = pcall(lsp.buf_notify, 0, method, params)
   if not ok then
@@ -1611,14 +1632,14 @@ function M.CheckLspHealth()
   local health = {
     clients = {},
     status = "unknown",
-    issues = {}
+    issues = {},
   }
-  
+
   -- Check for ionide clients (with safety check for test environment)
   if vim.lsp and vim.lsp.get_clients then
     local clients = vim.lsp.get_clients({ name = "ionide" })
     health.clients = clients
-    
+
     if #clients == 0 then
       health.status = "no_clients"
       table.insert(health.issues, "No ionide LSP clients are running")
@@ -1635,7 +1656,7 @@ function M.CheckLspHealth()
     health.status = "test_environment"
     table.insert(health.issues, "Running in test environment - LSP health checking disabled")
   end
-  
+
   return health
 end
 
@@ -1646,15 +1667,15 @@ function M.RestartLspClient()
     M.notify("LSP restart not available in current environment", vim.log.levels.WARN)
     return false
   end
-  
+
   local bufnr = vim.api.nvim_get_current_buf()
   local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "ionide" })
-  
+
   if #clients == 0 then
     M.notify("No ionide clients attached to current buffer", vim.log.levels.WARN)
     return false
   end
-  
+
   local success = true
   for _, client in ipairs(clients) do
     M.notify("Restarting LSP client " .. client.id, vim.log.levels.INFO)
@@ -1664,7 +1685,7 @@ function M.RestartLspClient()
       success = false
     end
   end
-  
+
   -- Give some time for cleanup then restart
   if success then
     vim.defer_fn(function()
@@ -1672,17 +1693,17 @@ function M.RestartLspClient()
       vim.cmd("edit!")
     end, 1000)
   end
-  
+
   return success
 end
 
 --- Monitor LSP health and auto-restart if needed
 function M.StartHealthMonitoring()
   local check_interval = 30000 -- 30 seconds
-  
+
   local function health_check()
     local health = M.CheckLspHealth()
-    
+
     if health.status == "no_clients" then
       M.notify("LSP Health: No clients detected, attempting restart", vim.log.levels.WARN)
       M.RestartLspClient()
@@ -1692,13 +1713,13 @@ function M.StartHealthMonitoring()
         M.notify("LSP Issue: " .. issue, vim.log.levels.WARN)
       end
     end
-    
+
     -- Schedule next check (only in non-test environments)
     if vim.defer_fn then
       vim.defer_fn(health_check, check_interval)
     end
   end
-  
+
   -- Start monitoring (only in non-test environments)
   if vim.defer_fn then
     vim.defer_fn(health_check, check_interval)
@@ -2383,7 +2404,7 @@ function M.setup(config)
   -- M.notify("entered setup for ionide: passed in config merged with defaults gives us " .. vim.inspect(M.MergedConfig))
   M.UpdateServerConfig(M.MergedConfig.settings.FSharp)
   M.InitializeDefaultFsiKeymapSettings()
-  
+
   -- Start health monitoring for resilience
   if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.EnableHealthMonitoring ~= false then
     M.StartHealthMonitoring()
@@ -2435,7 +2456,10 @@ uc("IonideCheckLspHealth", function()
   if #health.clients > 0 then
     vim.notify("Active clients: " .. #health.clients, vim.log.levels.INFO)
     for _, client in ipairs(health.clients) do
-      vim.notify("Client " .. client.id .. " (root: " .. (client.config.root_dir or "unknown") .. ")", vim.log.levels.INFO)
+      vim.notify(
+        "Client " .. client.id .. " (root: " .. (client.config.root_dir or "unknown") .. ")",
+        vim.log.levels.INFO
+      )
     end
   end
 end, { desc = "Ionide - Check LSP Health Status" })
@@ -3019,6 +3043,45 @@ uc("IonideWorkspacePeek", function()
     settingsFSharp.excludeProjectDirectories or {}
   )
 end, { desc = "Request a workspace peek from Lsp" })
+
+-- Test helper functions (exposed for testing purposes)
+M._unHtmlify = unHtmlify
+M._matchFsharpDocSigRequest = matchFsharpDocSigRequest
+M._parse_documentation_string = parse_string
+
+--- Replaces VSCode-specific documentation command links with neovim-compatible navigation
+---@param content string The content containing potential documentation links
+---@return string The content with replaced links
+function M._replace_documentation_links(content)
+  if not content then
+    return content
+  end
+
+  -- Pattern to match VSCode documentation command links
+  local pattern = "<a href='command:fsharp%.showDocumentation%?(.-)'>(..-)</a>"
+
+  local result = content:gsub(pattern, function(encoded_params, link_text)
+    -- Decode the URL-encoded JSON parameters to extract symbol information
+    local decoded_params = unHtmlify(encoded_params)
+
+    -- Try to parse the JSON to get symbol details
+    local success, params_table = pcall(vim.json.decode, decoded_params)
+    if success and params_table and params_table[1] then
+      local xml_sig = params_table[1].XmlDocSig or params_table[1].XmlSig
+      local assembly = params_table[1].AssemblyName or params_table[1].Assembly
+
+      if xml_sig then
+        -- Create helpful text that tells the user how to navigate in neovim
+        return string.format("**Go to definition** (place cursor on symbol and use `gd` or `<C-]>`)")
+      end
+    end
+
+    -- If parsing fails, just return a helpful message
+    return "**Go to definition** (place cursor on symbol and use `gd` or `<C-]>`)"
+  end)
+
+  return result
+end
 
 return M
 
