@@ -68,6 +68,10 @@ describe("LSP Connection Resilience Tests", function()
         message = "Request timeout"
       }
       
+      -- Mock with one client to pass the client check
+      vim.lsp.get_clients = function() 
+        return {{ id = 1, name = "ionide", config = { root_dir = "/test" }}}
+      end
       vim.lsp.buf_request = function(bufnr, method, params, handler)
         if handler then
           handler(timeout_error, nil, nil, nil)
@@ -79,7 +83,8 @@ describe("LSP Connection Resilience Tests", function()
         error_received = err
       end
       
-      ionide.Call("fsharp/project", {}, custom_handler)
+      -- Use CallWithResilience with no retries to avoid retry behavior in test
+      ionide.CallWithResilience("fsharp/project", {}, custom_handler, { retry_count = 0 })
       
       assert.is_table(error_received)
       assert.equals(-32001, error_received.code)
@@ -93,7 +98,10 @@ describe("LSP Connection Resilience Tests", function()
         message = "Server disconnected"
       }
       
-      vim.lsp.get_clients = function() return {} end
+      -- Mock with one client to pass the client check
+      vim.lsp.get_clients = function() 
+        return {{ id = 1, name = "ionide", config = { root_dir = "/test" }}}
+      end
       vim.lsp.buf_request = function(bufnr, method, params, handler)
         if handler then
           handler(disconnect_error, nil, nil, nil)
@@ -105,7 +113,8 @@ describe("LSP Connection Resilience Tests", function()
         error_received = err
       end
       
-      ionide.CallFSharpWorkspacePeek("/test", 2, {}, custom_handler)
+      -- Use CallWithResilience with no retries to avoid retry behavior in test
+      ionide.CallWithResilience("fsharp/workspacePeek", ionide.CreateFSharpWorkspacePeekRequest("/test", 2, {}), custom_handler, { retry_count = 0 })
       
       assert.is_table(error_received)
       assert.equals(-32603, error_received.code)

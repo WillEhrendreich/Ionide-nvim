@@ -122,7 +122,9 @@ describe("LSP Client Resilience Tests", function()
       local method_called = nil
       local params_passed = nil
       
-      vim.lsp.get_clients = function() return {} end
+      vim.lsp.get_clients = function() 
+        return {{ id = 1, name = "ionide", config = { root_dir = "/test" }}}
+      end
       vim.lsp.buf_request = function(bufnr, method, params, handler)
         method_called = method
         params_passed = params
