@@ -7,5 +7,31 @@ end
 vim.opt.rtp:append(".")
 vim.opt.rtp:append(plenary_dir)
 
+-- Mock vim.uv for older neovim versions or test environment
+if not vim.uv then
+  vim.uv = vim.loop or {
+    os_uname = function()
+      return { version = "Linux" }
+    end
+  }
+end
+
+-- Mock defer_fn for testing
+if not vim.defer_fn then
+  vim.defer_fn = function(fn, ms)
+    fn()
+  end
+end
+
+-- Mock wait for testing
+if not vim.wait then
+  vim.wait = function(ms, fn)
+    if fn then
+      return fn()
+    end
+    return true
+  end
+end
+
 vim.cmd("runtime plugin/plenary.vim")
 require("plenary.busted")
