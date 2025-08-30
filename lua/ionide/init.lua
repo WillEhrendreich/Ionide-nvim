@@ -654,6 +654,7 @@ M.DefaultNvimSettings = {
   },
   FsiKeymapSend = "<M-cr>",
   FsiKeymapToggle = "<M-@>",
+  EnableHealthMonitoring = true,
 }
 
 function M.GitFirstRootDir(n)
@@ -1368,15 +1369,25 @@ end
 ---@param path string
 ---@return lsp.TextDocumentIdentifier
 function M.TextDocumentIdentifier(path)
-  local is_windows = vim.uv.os_uname().version:match("Windows")
+  -- Handle compatibility with different Neovim versions
+  local uv = vim.uv or vim.loop
+  local is_windows = false
+  
+  if uv and uv.os_uname then
+    is_windows = uv.os_uname().version:match("Windows") ~= nil
+  else
+    -- Fallback detection for test environments
+    is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+  end
+  
   local usr_ss_opt
   if is_windows then
     usr_ss_opt = vim.o.shellslash
     vim.o.shellslash = true
   end
-  vim.notify("path: " .. path)
+  
   local uri = vim.fn.fnamemodify(vim.fs.normalize(path), ":p")
-  vim.notify("uri: " .. uri)
+  
   if string.sub(uri, 1, 1) == "/" then
     uri = "file://" .. uri
   else
@@ -1461,6 +1472,106 @@ end
 ---@param method (string) LSP method name
 ---@param params table|nil Parameters to send to the server
 ---@param handler function|nil optional handler to use instead of the default method.
+--- Enhanced LSP call with error handling and retry logic
+---@param method string
+---@param params table
+---@param handler function|nil
+---@param opts table|nil Options including retry_count, timeout
+---@return table<integer, integer>, fun() 2-tuple:
+---  - Map of client-id:request-id pairs for all successful requests.
+---  - Function which can be used to cancel all the requests. You could instead
+---    iterate all clients and call their `cancel_request()` methods.
+function M.CallWithResilience(method, params, handler, opts)
+  opts = opts or {}
+  local max_retries = opts.retry_count or 3
+  local timeout = opts.timeout or 10000 -- 10 seconds default
+  local retry_delay = opts.retry_delay or 1000 -- 1 second delay between retries
+  
+  local retries = 0
+  local original_handler = handler or M.Handlers[method]
+  
+  -- Check if any ionide clients are available (with safety check for test environment)
+  local clients = {}
+  if vim.lsp and vim.lsp.get_clients then
+    clients = vim.lsp.get_clients({ name = "ionide" })
+  end
+  
+  if #clients == 0 and not opts.skip_client_check then
+    local error_msg = "No ionide LSP clients available"
+    if original_handler then
+      original_handler({ code = -1, message = error_msg }, nil, nil, nil)
+    else
+      M.notify("LSP Error: " .. error_msg, vim.log.levels.WARN)
+    end
+    return {}, function() end
+  end
+  
+  local function resilient_handler(err, result, ctx, config)
+    if err then
+      -- Check if this is a retryable error
+      local retryable_codes = { -32603, -32001, -32002, -32300 } -- Server error, timeout, etc.
+      local is_retryable = vim.tbl_contains(retryable_codes, err.code or 0)
+      
+      if is_retryable and retries < max_retries then
+        retries = retries + 1
+        M.notify(string.format("LSP call failed (attempt %d/%d): %s. Retrying...", 
+          retries, max_retries + 1, err.message or "Unknown error"), vim.log.levels.WARN)
+        
+        -- Retry after delay
+        vim.defer_fn(function()
+          M.CallWithResilience(method, params, handler, 
+            vim.tbl_extend("force", opts, { retry_count = max_retries - retries }))
+        end, retry_delay)
+        return
+      else
+        -- Max retries reached or non-retryable error
+        if retries >= max_retries then
+          M.notify(string.format("LSP call failed after %d retries: %s", 
+            max_retries + 1, err.message or "Unknown error"), vim.log.levels.ERROR)
+        end
+      end
+    end
+    
+    -- Call original handler
+    if original_handler then
+      original_handler(err, result, ctx, config)
+    end
+  end
+  
+  -- Add timeout handling
+  local request_ids, cancel_fn = lsp.buf_request(0, method, params, resilient_handler)
+  
+  -- Set up timeout
+  local timeout_timer = nil
+  if vim.defer_fn then
+    timeout_timer = vim.defer_fn(function()
+      if cancel_fn then
+        cancel_fn()
+      end
+      if original_handler then
+        original_handler({ code = -32001, message = "Request timeout after " .. timeout .. "ms" }, nil, nil, nil)
+      end
+    end, timeout)
+  end
+  
+  -- Enhanced cancel function that also clears timeout
+  local enhanced_cancel = function()
+    if timeout_timer then
+      -- Use pcall to safely attempt timer stop
+      pcall(function()
+        if vim.fn and vim.fn.timer_stop then
+          vim.fn.timer_stop(timeout_timer)
+        end
+      end)
+    end
+    if cancel_fn then
+      cancel_fn()
+    end
+  end
+  
+  return request_ids, enhanced_cancel
+end
+
 --- if nil then it will try to use the method of the same name
 --- in M.Handlers from Ionide, if it exists.
 --- if that returns nil, then the vim.lsp.buf_notify() request
@@ -1472,12 +1583,126 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.Call(method, params, handler)
-  handler = handler or M.Handlers[method]
-  return lsp.buf_request(0, method, params, handler)
+  -- Use resilient call by default for better stability, but skip client check in test environments
+  local opts = { skip_client_check = not vim.lsp or not vim.lsp.get_clients }
+  return M.CallWithResilience(method, params, handler, opts)
 end
 
 function M.CallLspNotify(method, params)
-  lsp.buf_notify(0, method, params)
+  -- Check if any ionide clients are available (with safety check for test environment)
+  if vim.lsp and vim.lsp.get_clients then
+    local clients = vim.lsp.get_clients({ name = "ionide" })
+    if #clients == 0 then
+      M.notify("No ionide LSP clients available for notification: " .. method, vim.log.levels.WARN)
+      return
+    end
+  end
+  
+  -- Wrap in pcall for error safety
+  local ok, err = pcall(lsp.buf_notify, 0, method, params)
+  if not ok then
+    M.notify("Failed to send LSP notification " .. method .. ": " .. (err or "unknown error"), vim.log.levels.ERROR)
+  end
+end
+
+--- Health monitoring and diagnostics
+---@return table Health status information
+function M.CheckLspHealth()
+  local health = {
+    clients = {},
+    status = "unknown",
+    issues = {}
+  }
+  
+  -- Check for ionide clients (with safety check for test environment)
+  if vim.lsp and vim.lsp.get_clients then
+    local clients = vim.lsp.get_clients({ name = "ionide" })
+    health.clients = clients
+    
+    if #clients == 0 then
+      health.status = "no_clients"
+      table.insert(health.issues, "No ionide LSP clients are running")
+    else
+      health.status = "healthy"
+      for _, client in ipairs(clients) do
+        if client.is_stopped and client.is_stopped() then
+          health.status = "degraded"
+          table.insert(health.issues, "Client " .. client.id .. " is stopped")
+        end
+      end
+    end
+  else
+    health.status = "test_environment"
+    table.insert(health.issues, "Running in test environment - LSP health checking disabled")
+  end
+  
+  return health
+end
+
+--- Attempt to restart the LSP client for the current buffer
+---@return boolean Success status
+function M.RestartLspClient()
+  if not vim.lsp or not vim.lsp.get_clients then
+    M.notify("LSP restart not available in current environment", vim.log.levels.WARN)
+    return false
+  end
+  
+  local bufnr = vim.api.nvim_get_current_buf()
+  local clients = vim.lsp.get_clients({ bufnr = bufnr, name = "ionide" })
+  
+  if #clients == 0 then
+    M.notify("No ionide clients attached to current buffer", vim.log.levels.WARN)
+    return false
+  end
+  
+  local success = true
+  for _, client in ipairs(clients) do
+    M.notify("Restarting LSP client " .. client.id, vim.log.levels.INFO)
+    local ok, err = pcall(vim.lsp.stop_client, client.id, true)
+    if not ok then
+      M.notify("Failed to stop client " .. client.id .. ": " .. (err or "unknown error"), vim.log.levels.ERROR)
+      success = false
+    end
+  end
+  
+  -- Give some time for cleanup then restart
+  if success then
+    vim.defer_fn(function()
+      -- Trigger LSP start for current buffer
+      vim.cmd("edit!")
+    end, 1000)
+  end
+  
+  return success
+end
+
+--- Monitor LSP health and auto-restart if needed
+function M.StartHealthMonitoring()
+  local check_interval = 30000 -- 30 seconds
+  
+  local function health_check()
+    local health = M.CheckLspHealth()
+    
+    if health.status == "no_clients" then
+      M.notify("LSP Health: No clients detected, attempting restart", vim.log.levels.WARN)
+      M.RestartLspClient()
+    elseif health.status == "degraded" then
+      M.notify("LSP Health: Degraded service detected", vim.log.levels.WARN)
+      for _, issue in ipairs(health.issues) do
+        M.notify("LSP Issue: " .. issue, vim.log.levels.WARN)
+      end
+    end
+    
+    -- Schedule next check (only in non-test environments)
+    if vim.defer_fn then
+      vim.defer_fn(health_check, check_interval)
+    end
+  end
+  
+  -- Start monitoring (only in non-test environments)
+  if vim.defer_fn then
+    vim.defer_fn(health_check, check_interval)
+  end
 end
 
 function M.DotnetFile2Request(projectPath, currentVirtualPath, newFileVirtualPath)
@@ -2158,6 +2383,11 @@ function M.setup(config)
   -- M.notify("entered setup for ionide: passed in config merged with defaults gives us " .. vim.inspect(M.MergedConfig))
   M.UpdateServerConfig(M.MergedConfig.settings.FSharp)
   M.InitializeDefaultFsiKeymapSettings()
+  
+  -- Start health monitoring for resilience
+  if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.EnableHealthMonitoring ~= false then
+    M.StartHealthMonitoring()
+  end
 
   if lspconfig_is_present then
     return M.DelegateToLspConfig(M.MergedConfig)
@@ -2193,6 +2423,31 @@ uc("IonideResetIonideBufferNumber", function()
 end, {
   desc = "Resets the current buffer that fsi is assigned to back to the invalid number -1, so that Ionide knows to recreate it.",
 })
+
+uc("IonideCheckLspHealth", function()
+  local health = M.CheckLspHealth()
+  vim.notify("LSP Health Status: " .. health.status, vim.log.levels.INFO)
+  if #health.issues > 0 then
+    for _, issue in ipairs(health.issues) do
+      vim.notify("Issue: " .. issue, vim.log.levels.WARN)
+    end
+  end
+  if #health.clients > 0 then
+    vim.notify("Active clients: " .. #health.clients, vim.log.levels.INFO)
+    for _, client in ipairs(health.clients) do
+      vim.notify("Client " .. client.id .. " (root: " .. (client.config.root_dir or "unknown") .. ")", vim.log.levels.INFO)
+    end
+  end
+end, { desc = "Ionide - Check LSP Health Status" })
+
+uc("IonideRestartLspClient", function()
+  local success = M.RestartLspClient()
+  if success then
+    vim.notify("LSP client restart initiated", vim.log.levels.INFO)
+  else
+    vim.notify("Failed to restart LSP client", vim.log.levels.ERROR)
+  end
+end, { desc = "Ionide - Restart LSP Client" })
 
 --"
 --" function! s:win_gotoid_safe(winid)

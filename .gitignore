@@ -15,3 +15,7 @@ fsac.zip
 lua/ionide/handlers.lua
 oldIndent.vim
 .vscode
+nvim-linux64/
+nvim-linux64.tar.gz
+*.tmp
+*.log

@@ -261,6 +261,10 @@
 ---@field FsiStdOutFileName string
 ---@field FsiKeymapSend string
 ---@field FsiKeymapToggle string
+--- Whether to enable automatic health monitoring for LSP clients
+--- Monitors client status every 30 seconds and attempts restart on failures
+--- defaults to true
+---@field EnableHealthMonitoring boolean
 
 ---@class IonideOptions: lspconfig.options.fsautocomplete
 ---@field IonideNvimSettings IonideNvimSettings
