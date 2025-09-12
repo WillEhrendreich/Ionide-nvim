@@ -210,6 +210,39 @@ if neoconf == nil then
   }
 end
 
+local function run_dotnet_version(root)
+  local cmd = "dotnet --version"
+  if root and root ~= "" then
+    cmd = 'cd "' .. root .. '" && ' .. cmd
+  end
+  local output = vim.fn.system(cmd)
+  if vim.v.shell_error ~= 0 then
+    return nil, output
+  end
+  return output:gsub("%s+$", ""), nil
+end
+
+local function parse_semver(version_str)
+  local parts = vim.split(version_str, "[-.]")
+  local major = tonumber(parts[1])
+  local minor = tonumber(parts[2])
+  local patch = tonumber(parts[3])
+  local prerelease = nil
+  if #parts > 3 then
+    prerelease = table.concat(parts, ".", 4)
+  end
+  return {
+    major = major,
+    minor = minor,
+    patch = patch,
+    prerelease = prerelease,
+    raw = version_str,
+  }
+end
+
+local function tfm_for_sdk_version(sdk_version)
+  return "net" .. sdk_version.major .. "." .. sdk_version.minor
+end
 -- lspconfig.fsautocomplete = {
 --   ---@param options lspconfig.options.fsautocomplete
 --   setup = function(options) end,
@@ -354,6 +387,84 @@ M.getIonideClientConfigRootDirOrCwd = function()
   end
 end
 
+function M.GitFirstRootDir(n)
+  -- vim.notify("finding root for : " .. vim.inspect(n))
+  local root
+  root = root or util.root_pattern("*.sln")(n)
+  if root then
+    -- vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
+  root = root or util.root_pattern("*.fsproj")(n)
+  if root then
+    -- vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
+  root = root or util.root_pattern("*.fsx")(n)
+  if root then
+    -- vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
+  root = util.find_git_ancestor(n)
+  if root then
+    -- vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
+  -- vim.notify("root is : " .. vim.inspect(root))
+  return root
+end
+
+---@return table<string []>
+M.GetDefaultEnvVarsForRoot = function(root)
+  local output, err = run_dotnet_version(root)
+  if not output then
+    -- Error running dotnet --version, return empty args
+    return {}
+  end
+
+  local sdk_version = parse_semver(output)
+  local sdk_tfm = tfm_for_sdk_version(sdk_version)
+  local fsac_tfm = sdk_tfm -- Assume FSAC TFM matches SDK TFM
+  local should_apply_implicit_roll_forward = sdk_tfm ~= fsac_tfm
+  local envs = {}
+  -- Set environment variables if needed
+  if should_apply_implicit_roll_forward or sdk_version.prerelease then
+    if should_apply_implicit_roll_forward then
+      vim.list_extend(envs, { { "DOTNET_ROLL_FORWARD", "LatestMajor" } })
+    end
+    if sdk_version.prerelease then
+      vim.list_extend(envs, { { "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "1" } })
+    end
+  end
+
+  return envs
+end
+
+---@return string []
+M.GetDefaultDotnetArgsForRoot = function(root)
+  local output, err = run_dotnet_version(root)
+  if not output then
+    -- Error running dotnet --version, return empty args
+    return {}
+  end
+
+  local sdk_version = parse_semver(output)
+  local sdk_tfm = tfm_for_sdk_version(sdk_version)
+  local fsac_tfm = sdk_tfm -- Assume FSAC TFM matches SDK TFM
+  local should_apply_implicit_roll_forward = sdk_tfm ~= fsac_tfm
+
+  local args = {}
+  if should_apply_implicit_roll_forward then
+    table.insert(args, "--roll-forward")
+    table.insert(args, "LatestMajor")
+  end
+  if sdk_version.prerelease then
+    table.insert(args, "--roll-forward-to-prerelease")
+    table.insert(args, "1")
+  end
+  return args
+end
+
 M.projectFolders = {}
 
 ---@type table<string,ProjectInfo>
@@ -465,7 +576,7 @@ M.DefaultServerSettings = {
     --      ]
     --    },
     sourceTextImplementation = "RoslynSourceText",
-    dotnetArgs = {},
+    dotnetArgs = M.GetDefaultDotnetArgsForRoot(M.GitFirstRootDir(0)) or {},
     netCoreDllPath = "",
     gc = {
       conserveMemory = 0,
@@ -656,33 +767,6 @@ M.DefaultNvimSettings = {
   FsiKeymapToggle = "<M-@>",
   EnableHealthMonitoring = true,
 }
-
-function M.GitFirstRootDir(n)
-  vim.notify("finding root for : " .. vim.inspect(n))
-  local root
-  root = root or util.root_pattern("*.sln")(n)
-  if root then
-    vim.notify("root is : " .. vim.inspect(root))
-    return root
-  end
-  root = root or util.root_pattern("*.fsproj")(n)
-  if root then
-    vim.notify("root is : " .. vim.inspect(root))
-    return root
-  end
-  root = root or util.root_pattern("*.fsx")(n)
-  if root then
-    vim.notify("root is : " .. vim.inspect(root))
-    return root
-  end
-  root = util.find_git_ancestor(n)
-  if root then
-    vim.notify("root is : " .. vim.inspect(root))
-    return root
-  end
-  vim.notify("root is : " .. vim.inspect(root))
-  return root
-end
 
 local function split_lines(value)
   value = string.gsub(value, "\r\n?", "\n")
@@ -1322,7 +1406,6 @@ M.DefaultLspConfig = {
   filetypes = { "fsharp" },
   name = "ionide",
   cmd = M.DefaultNvimSettings.FsautocompleteCommand,
-  -- cmd_env = M.DefaultNvimSettings.FsautocompleteCommand,
   autostart = true,
   handlers = M.CreateHandlers(),
   init_options = { AutomaticWorkspaceInit = M.DefaultNvimSettings.AutomaticWorkspaceInit },
@@ -2401,7 +2484,13 @@ function M.setup(config)
   M.PassedInConfig = config or {}
   -- M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultLspConfig, M.PassedInConfig)
-  -- M.notify("entered setup for ionide: passed in config merged with defaults gives us " .. vim.inspect(M.MergedConfig))
+  local envs = M.GetDefaultEnvVarsForRoot(M.GitFirstRootDir(0))
+  -- M.notify("setting environment variables: \n" .. vim.inspect(envs))
+  for i, env in ipairs(envs) do
+    local name = env[1]
+    local value = env[2]
+    vim.uv.os_setenv(name, value)
+  end
   M.UpdateServerConfig(M.MergedConfig.settings.FSharp)
   M.InitializeDefaultFsiKeymapSettings()
 
