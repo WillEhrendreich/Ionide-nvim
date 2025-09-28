@@ -2490,13 +2490,23 @@ function M.setup(config)
   M.UpdateServerConfig(M.MergedConfig.settings.FSharp)
   M.InitializeDefaultFsiKeymapSettings()
 
-  if lspconfig_is_present then
+  if vim.fn.has("nvim-0.11.0") then
+    return M.MergedConfig
+  elseif lspconfig_is_present then
     return M.DelegateToLspConfig(M.MergedConfig)
+  else
+    return create_manager(M.MergedConfig)
   end
-  return create_manager(M.MergedConfig)
 end
 
 function M.status()
+  if vim.fn.has("nvim-0.11.0") then
+    -- return M.MergedConfig()
+  elseif lspconfig_is_present then
+    -- return M.DelegateToLspConfig(M.MergedConfig)
+  else
+    -- return create_manager(M.MergedConfig)
+  end
   if lspconfig_is_present then
     -- print("* LSP server: handled by nvim-lspconfig")
 
