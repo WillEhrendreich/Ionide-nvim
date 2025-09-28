@@ -571,7 +571,7 @@ M.DefaultServerSettings = {
     --      ]
     --    },
     sourceTextImplementation = "RoslynSourceText",
-    dotnetArgs = M.GetDefaultDotnetArgsForRoot(M.GitFirstRootDir(0)) or {},
+    dotnetArgs = {},
     netCoreDllPath = "",
     gc = {
       conserveMemory = 0,
