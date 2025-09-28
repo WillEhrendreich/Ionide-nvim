@@ -2524,20 +2524,20 @@ function M.status()
   else
     -- return create_manager(M.MergedConfig)
   end
-  if lspconfig_is_present then
-    -- print("* LSP server: handled by nvim-lspconfig")
-
-    -- local ionide = lsp.buf.inlay_hint(0, true)
-    vim.inspect(lsp.buf.list_workspace_folders())
-  elseif M.Manager ~= nil then
-    if next(M.Manager.clients()) == nil then
-      print("* LSP server: not started")
-    else
-      print("* LSP server: started")
-    end
-  else
-    print("* LSP server: not initialized")
-  end
+  -- if lspconfig_is_present then
+  --   -- print("* LSP server: handled by nvim-lspconfig")
+  --
+  --   -- local ionide = lsp.buf.inlay_hint(0, true)
+  --   vim.inspect(lsp.buf.list_workspace_folders())
+  -- elseif M.Manager ~= nil then
+  --   if next(M.Manager.clients()) == nil then
+  --     print("* LSP server: not started")
+  --   else
+  --     print("* LSP server: started")
+  --   end
+  -- else
+  --   print("* LSP server: not initialized")
+  -- end
 end
 
 FsiBuffer = -1
