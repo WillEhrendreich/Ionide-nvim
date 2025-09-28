@@ -1426,8 +1426,6 @@ M.DefaultLspConfig = {
     M.Initialize()
   end,
   settings = { FSharp = M.DefaultServerSettings },
-  root_dir = M.GitFirstRootDir,
-
   log_level = lsp.protocol.MessageType.Warning,
   message_level = lsp.protocol.MessageType.Warning,
   capabilities = lsp.protocol.make_client_capabilities(),
@@ -2137,7 +2135,7 @@ function M.Initialize()
 
   validate({
     cmd = { M.MergedConfig.cmd, "table", true },
-    root_dir = { M.MergedConfig.root_dir, "function", true },
+    -- root_dir = { M.MergedConfig.root_dir, "function", true },
     filetypes = { M.MergedConfig.filetypes, "table", true },
     on_attach = { M.MergedConfig.on_attach, "function", true },
     -- on_new_config = { M.MergedConfig.on_new_config, "function", true },
@@ -2319,8 +2317,9 @@ autocmd({ "BufReadPost" }, {
 local function create_manager(config)
   validate({
     cmd = { config.cmd, "table", true },
-    root_dir = { config.root_dir, "function", true },
+    -- root_dir = { config.root_dir, "function", true },
 
+    root_markers = { config.root_markers, "table", true },
     filetypes = { config.filetypes, "table", true },
     on_attach = { config.on_attach, "function", true },
     on_new_config = { config.on_new_config, "function", true },
@@ -2553,25 +2552,25 @@ end, {
   desc = "Resets the current buffer that fsi is assigned to back to the invalid number -1, so that Ionide knows to recreate it.",
 })
 
-uc("IonideCheckLspHealth", function()
-  local health = M.CheckLspHealth()
-  vim.notify("LSP Health Status: " .. health.status, vim.log.levels.INFO)
-  if #health.issues > 0 then
-    for _, issue in ipairs(health.issues) do
-      vim.notify("Issue: " .. issue, vim.log.levels.WARN)
-    end
-  end
-  if #health.clients > 0 then
-    vim.notify("Active clients: " .. #health.clients, vim.log.levels.INFO)
-    for _, client in ipairs(health.clients) do
-      vim.notify(
-        "Client " .. client.id .. " (root: " .. (client.config.root_dir or "unknown") .. ")",
-        vim.log.levels.INFO
-      )
-    end
-  end
-end, { desc = "Ionide - Check LSP Health Status" })
-
+-- uc("IonideCheckLspHealth", function()
+--   local health = M.CheckLspHealth()
+--   vim.notify("LSP Health Status: " .. health.status, vim.log.levels.INFO)
+--   if #health.issues > 0 then
+--     for _, issue in ipairs(health.issues) do
+--       vim.notify("Issue: " .. issue, vim.log.levels.WARN)
+--     end
+--   end
+--   if #health.clients > 0 then
+--     vim.notify("Active clients: " .. #health.clients, vim.log.levels.INFO)
+--     for _, client in ipairs(health.clients) do
+--       vim.notify(
+--         "Client " .. client.id .. " (root: " .. (client.config.root_dir or "unknown") .. ")",
+--         vim.log.levels.INFO
+--       )
+--     end
+--   end
+-- end, { desc = "Ionide - Check LSP Health Status" })
+--
 uc("IonideRestartLspClient", function()
   local success = M.RestartLspClient()
   if success then
