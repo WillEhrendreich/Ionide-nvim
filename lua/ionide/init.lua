@@ -385,6 +385,11 @@ end
 function M.GitFirstRootDir(n)
   -- vim.notify("finding root for : " .. vim.inspect(n))
   local root
+  root = root or util.root_pattern("*.slnx")(n)
+  if root then
+    -- vim.notify("root is : " .. vim.inspect(root))
+    return root
+  end
   root = root or util.root_pattern("*.sln")(n)
   if root then
     -- vim.notify("root is : " .. vim.inspect(root))
@@ -1398,9 +1403,10 @@ end
 ---@type IonideOptions
 M.DefaultLspConfig = {
   IonideNvimSettings = M.DefaultNvimSettings,
-  filetypes = { "fsharp" },
+  filetypes = { "fsharp", "fsharp_project" },
   name = "ionide",
   cmd = M.DefaultNvimSettings.FsautocompleteCommand,
+  root_markers = { "*.slnx", "*.sln", "*.fsproj", ".git" },
   autostart = true,
   handlers = M.CreateHandlers(),
   init_options = { AutomaticWorkspaceInit = M.DefaultNvimSettings.AutomaticWorkspaceInit },
@@ -2129,6 +2135,14 @@ function M.Initialize()
 
   M.notify("Initializing")
 
+  validate({
+    cmd = { M.MergedConfig.cmd, "table", true },
+    root_dir = { M.MergedConfig.root_dir, "function", true },
+    filetypes = { M.MergedConfig.filetypes, "table", true },
+    on_attach = { M.MergedConfig.on_attach, "function", true },
+    -- on_new_config = { M.MergedConfig.on_new_config, "function", true },
+  })
+
   M.notify("Calling updateServerConfig...")
   M.UpdateServerConfig(M.MergedConfig.settings.FSharp)
 
@@ -2303,11 +2317,12 @@ autocmd({ "BufReadPost" }, {
 ---@param config IonideOptions
 local function create_manager(config)
   validate({
-    cmd = { config.cmd, "t", true },
-    root_dir = { config.root_dir, "f", true },
-    filetypes = { config.filetypes, "t", true },
-    on_attach = { config.on_attach, "f", true },
-    on_new_config = { config.on_new_config, "f", true },
+    cmd = { config.cmd, "table", true },
+    root_dir = { config.root_dir, "function", true },
+
+    filetypes = { config.filetypes, "table", true },
+    on_attach = { config.on_attach, "function", true },
+    on_new_config = { config.on_new_config, "function", true },
   })
 
   config = vim.tbl_deep_extend("keep", config, M.DefaultLspConfig)
