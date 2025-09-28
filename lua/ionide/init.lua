@@ -2158,6 +2158,7 @@ function M.Initialize()
   vim.notify("Ionide Client workspace folders: " .. vim.inspect(thisIonide.workspace_folders))
 
   local thisBufIonideRootDir = thisIonide.workspace_folders[1].name -- or vim.fn.getcwd()
+
   M.CallFSharpWorkspacePeek(
     thisBufIonideRootDir,
     M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel,
@@ -2494,7 +2495,9 @@ function M.setup(config)
   M.PassedInConfig = config or {}
   -- M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultLspConfig, M.PassedInConfig)
-  local envs = M.GetDefaultEnvVarsForRoot(M.GitFirstRootDir(0))
+  local bufnr = vim.api.nvim_get_current_buf()
+  local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+  local envs = M.GetDefaultEnvVarsForRoot(M.GitFirstRootDir(bufname))
   -- M.notify("setting environment variables: \n" .. vim.inspect(envs))
   for i, env in ipairs(envs) do
     local name = env[1]
