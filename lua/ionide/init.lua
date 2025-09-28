@@ -242,10 +242,6 @@ end
 local function tfm_for_sdk_version(sdk_version)
   return "net" .. sdk_version.major .. "." .. sdk_version.minor
 end
--- lspconfig.fsautocomplete = {
---   ---@param options lspconfig.options.fsautocomplete
---   setup = function(options) end,
--- }
 
 ---determines if input string ends with the suffix given.
 ---@param s string
@@ -2490,13 +2486,9 @@ function M.setup(config)
     local value = env[2]
     vim.uv.os_setenv(name, value)
   end
+
   M.UpdateServerConfig(M.MergedConfig.settings.FSharp)
   M.InitializeDefaultFsiKeymapSettings()
-
-  -- Start health monitoring for resilience
-  if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.EnableHealthMonitoring ~= false then
-    M.StartHealthMonitoring()
-  end
 
   if lspconfig_is_present then
     return M.DelegateToLspConfig(M.MergedConfig)
