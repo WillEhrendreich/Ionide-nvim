@@ -17,11 +17,13 @@ M.DefaultConfig = {}
 M.MergedConfig = {}
 ---@type lspconfig.options.fsautocomplete
 M.PassedInConfig = {}
+
 ---this is the setup for ionide.nvim.
 ---@param config
 M.setup = function(config)
   M.PassedInConfig = config
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultConfig, M.PassedInConfig or {})
+  return M.MergedConfig
 end
 
 function M.show_config()
