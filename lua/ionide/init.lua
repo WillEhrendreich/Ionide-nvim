@@ -2069,50 +2069,50 @@ function M.RegisterAutocmds()
     end,
   })
 
-  autocmd({ "BufEnter", "BufWritePost", "InsertLeave" }, {
-    desc = "FSharp Auto refresh code lens ",
-    group = grp("IonideAutomaticCodeLensRefresh", { clear = true }),
-    pattern = "*.fs,*.fsi,*.fsx",
-    callback = function(arg)
-      if
-        M.MergedConfig.settings.FSharp.codeLenses.references.enabled == true
-        or M.MergedConfig.settings.FSharp.codeLenses.references.enabled == true
-      then
-        if M.MergedConfig.IonideNvimSettings.AutomaticCodeLensRefresh == true then
-          vim.defer_fn(function()
-            vim.lsp.codelens.refresh()
-            -- M.notify("lsp codelens refreshing")
-          end, 2000)
-        end
-      end
-    end,
-  })
+  -- autocmd({ "BufEnter", "BufWritePost", "InsertLeave" }, {
+  --   desc = "FSharp Auto refresh code lens ",
+  --   group = grp("IonideAutomaticCodeLensRefresh", { clear = true }),
+  --   pattern = "*.fs,*.fsi,*.fsx",
+  --   callback = function(arg)
+  --     if
+  --       M.MergedConfig.settings.FSharp.codeLenses.references.enabled == true
+  --       or M.MergedConfig.settings.FSharp.codeLenses.references.enabled == true
+  --     then
+  --       if M.MergedConfig.IonideNvimSettings.AutomaticCodeLensRefresh == true then
+  --         vim.defer_fn(function()
+  --           vim.lsp.codelens.refresh()
+  --           -- M.notify("lsp codelens refreshing")
+  --         end, 2000)
+  --       end
+  --     end
+  --   end,
+  -- })
 
-  autocmd({ "CursorHold", "CursorHoldI", "InsertLeave" }, {
-    desc = "Ionide Show Signature on cursor move or hold",
-    group = grp("FSharp_ShowSignatureOnCursorMoveOrHold", { clear = true }),
-    pattern = "*.fs,*.fsi,*.fsx",
-    callback = function()
-      if M.MergedConfig.IonideNvimSettings.ShowSignatureOnCursorMove == true then
-        vim.defer_fn(function()
-          local pos = vim.inspect_pos(
-            vim.api.nvim_get_current_buf(),
-            nil,
-            nil,
-            ---@type InspectorFilter
-            {
-              extmarks = false,
-              syntax = false,
-              semantic_tokens = false,
-              treesitter = false,
-            }
-          )
-          M.CallFSharpSignature(vim.uri_from_bufnr(pos.buffer), pos.col, pos.row)
-        end, 1000)
-      end
-    end,
-  })
-
+  -- autocmd({ "CursorHold", "CursorHoldI", "InsertLeave" }, {
+  --   desc = "Ionide Show Signature on cursor move or hold",
+  --   group = grp("FSharp_ShowSignatureOnCursorMoveOrHold", { clear = true }),
+  --   pattern = "*.fs,*.fsi,*.fsx",
+  --   callback = function()
+  --     if M.MergedConfig.IonideNvimSettings.ShowSignatureOnCursorMove == true then
+  --       vim.defer_fn(function()
+  --         local pos = vim.inspect_pos(
+  --           vim.api.nvim_get_current_buf(),
+  --           nil,
+  --           nil,
+  --           ---@type InspectorFilter
+  --           {
+  --             extmarks = false,
+  --             syntax = false,
+  --             semantic_tokens = false,
+  --             treesitter = false,
+  --           }
+  --         )
+  --         M.CallFSharpSignature(vim.uri_from_bufnr(pos.buffer), pos.col, pos.row)
+  --       end, 1000)
+  --     end
+  --   end,
+  -- })
+  --
   autocmd({ "BufReadPost" }, {
     desc = "Apply Recommended Colorscheme to Lsp Diagnostic and Code lenses.",
     group = grp("FSharp_ApplyRecommendedColorScheme", { clear = true }),
