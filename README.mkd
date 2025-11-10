@@ -78,22 +78,9 @@ If you are using [neovim/nvim-lspconfig](https://github.com/neovim/nvim-lspconfi
     "WillEhrendreich/Ionide-Nvim",
   },
   opts = {
-    -- LSP Server Settings
-    -- Sets the default configuration for an LSP client (or all clients if the special name "*" is used).
-    ---@alias lazyvim.lsp.Config vim.lsp.Config|{mason?:boolean, enabled?:boolean, keys?:LazyKeysLspSpec[]}
-    ---@type table<string, lazyvim.lsp.Config|boolean>
     servers = {
       fsautocomplete = require("ionide").setup({
-            -- set things here if you want to override defaults otherwise just send in {} like require("ionide").setup({})
-        IonideNvimSettings = {
-        },
-        cmd = {
-          vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete.cmd"),
-        },
-        settings = {
-          FSharp = {
-          },
-        },
+        -- set things here if you want to override defaults otherwise just send in {} like require("ionide").setup({})
       }),
     },
   },
