@@ -403,7 +403,13 @@ M.DefaultLspConfig = {
   name = "ionide",
   cmd = M.DefaultNvimSettings.FsautocompleteCommand,
 
-  root_dir = M.GetRoot,
+  root_dir = function(bufnr, on_dir)
+    local bufnr = vim.api.nvim_get_current_buf()
+    local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+    local root = M.GetRoot(bufname)
+
+    return on_dir(root)
+  end,
   -- root_markers = { "*.slnx", "*.sln", "*.fsproj", ".git" },
   -- autostart = true,
   settings = { FSharp = M.DefaultServerSettings },
@@ -737,7 +743,7 @@ function M.OnFSProjSave()
 end
 
 function M.RegisterAutocmds()
-  vim.notify("Registering Ionide FSharp autocmds...")
+  -- vim.notify("Registering Ionide FSharp autocmds...")
   vim.api.nvim_create_autocmd("BufWritePost", {
     pattern = "*.fsproj",
     desc = "FSharp Auto refresh on project save",
@@ -1209,7 +1215,7 @@ function M.SendAllToFsi()
 end
 
 function M.SetKeymaps()
-  vim.notify("Setting up FSI keymaps")
+  -- vim.notify("Setting up FSI keymaps")
   local send = M.MergedConfig.IonideNvimSettings.FsiKeymapSend or "<M-CR>"
   local toggle = M.MergedConfig.IonideNvimSettings.FsiKeymapToggle or "<M-@>"
   vim.keymap.set("v", send, function()
@@ -1242,9 +1248,9 @@ vim.api.nvim_create_user_command("IonideResetFSI", M.ResetFsi, { desc = "Ionide 
 
 function M.setup(config)
   M.PassedInConfig = config or {}
-  M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
+  -- M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultLspConfig, M.PassedInConfig)
-  M.notify("Initializing")
+  -- M.notify("Initializing")
 
   vim.validate({
     cmd = { M.MergedConfig.cmd, "table", true },
