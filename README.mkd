@@ -123,7 +123,7 @@ Here are all the defaults that end up in a final merged config
 ionide ={
 --- Settings specific to neovim's built-in LSP client
     IonideNvimSettings = {
-    AutocmdEvents = { "LspAttach", "BufEnter", "BufWritePost", "CursorHold", "CursorHoldI", "InsertEnter", "InsertLeave" },
+    AutocmdEvents = { "LspAttach"},
     AutomaticReloadWorkspace = true,
     AutomaticWorkspaceInit = true,
     FsautocompleteCommand = { "fsautocomplete" },
