@@ -59,159 +59,42 @@ at the root directory of your F# project, and configure `ionide.cmd`
 
 ### Install a LSP Client
 
-#### For Neovim 0.8+
+#### For Neovim 0.11.2 and later
 
 No LSP client plugin is required.
 
-If you are using [neovim/nvim-lspconfig](https://github.com/neovim/nvim-lspconfig), do *not* enable `fsautocomplete`.
-Ionide-Nvim automatically integrates itself into nvim-lspconfig and will register itself as a server.
-
-### Install an autocompletion plugin
-
-We recommend using [nvim-cmp](https://github.com/hrsh7th/nvim-cmp).
-
-~~~.lua
-
--- this sample mostly from Lazyvim's setup. It's very nice, and uses lazy.nvim for plugin management.-
--- must have a snippet engine for nvim-cmp
--- we recommend luaSnip 
-{
-  "L3MON4D3/LuaSnip",
-  build = (not jit.os:find("Windows"))
-      and "echo 'NOTE: jsregexp is optional, so not a big deal if it fails to build'; make install_jsregexp"
-    or nil,
-  dependencies = {
-    "rafamadriz/friendly-snippets",
-    config = function()
-      require("luasnip.loaders.from_vscode").lazy_load()
-    end,
-  },
-  opts = {
-    history = true,
-    delete_check_events = "TextChanged",
-  },
-  -- stylua: ignore
-  keys = {
-    {
-      "<tab>",
-      function()
-        return require("luasnip").jumpable(1) and "<Plug>luasnip-jump-next" or "<tab>"
-      end,
-      expr = true, silent = true, mode = "i",
-    },
-    { "<tab>", function() require("luasnip").jump(1) end, mode = "s" },
-    { "<s-tab>", function() require("luasnip").jump(-1) end, mode = { "i", "s" } },
-  },
-},
-{
-  "hrsh7th/nvim-cmp",
-  version = false, -- last release is way too old
-  event = "InsertEnter",
-  dependencies = {
-    "hrsh7th/cmp-nvim-lsp",
-    "hrsh7th/cmp-buffer",
-    "hrsh7th/cmp-path",
-    "saadparwaiz1/cmp_luasnip",
-  },
-  opts = function()
-    vim.api.nvim_set_hl(0, "CmpGhostText", { link = "Comment", default = true })
-    local cmp = require("cmp")
-    local defaults = require("cmp.config.default")()
-    return {
-      completion = {
-        completeopt = "menu,menuone,noinsert",
-      },
-      snippet = {
-        expand = function(args)
-          require("luasnip").lsp_expand(args.body)
-        end,
-      },
-      mapping = cmp.mapping.preset.insert({
-        ["<C-n>"] = cmp.mapping.select_next_item({ behavior = cmp.SelectBehavior.Insert }),
-        ["<C-p>"] = cmp.mapping.select_prev_item({ behavior = cmp.SelectBehavior.Insert }),
-        ["<C-b>"] = cmp.mapping.scroll_docs(-4),
-        ["<C-f>"] = cmp.mapping.scroll_docs(4),
-        ["<C-Space>"] = cmp.mapping.complete(),
-        ["<C-e>"] = cmp.mapping.abort(),
-        ["<CR>"] = cmp.mapping.confirm({ select = true }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
-        ["<S-CR>"] = cmp.mapping.confirm({
-          behavior = cmp.ConfirmBehavior.Replace,
-          select = true,
-        }), -- Accept currently selected item. Set `select` to `false` to only confirm explicitly selected items.
-      }),
-      sources = cmp.config.sources({
-        { name = "nvim_lsp" },
-        { name = "luasnip" },
-        { name = "buffer" },
-        { name = "path" },
-      }),
-      experimental = {
-        ghost_text = {
-          hl_group = "CmpGhostText",
-        },
-      },
-      sorting = defaults.sorting,
-    }
-  end,
-}
-~~~
+If you are using [neovim/nvim-lspconfig](https://github.com/neovim/nvim-lspconfig), set up `fsautocomplete` as follows:
 
 
-### Install Ionide-Nvim
+### Infunction(
 
 ~~~lua
 -- lazy.nvim
-  {
+{
+-- very recommended to use nvim-lspconfig, as it takes care of much of the management of starting Ionide,
+  "neovim/nvim-lspconfig",
+  version = false, -- last release is way too old
+  dependencies = {
     "WillEhrendreich/Ionide-Nvim",
-    dependencies = {
-      {
-      -- highly recommended to use Mason. very nice for lsp/linter/tool installations. 
-        "williamboman/mason.nvim",
-        opts = {
-        -- here we make sure fsautocomplete is downloaded by mason, which Ionide absolutely needs in order to work. 
-          ensure_installed = {
-            "fsautocomplete",
+  },
+  opts = {
+    -- LSP Server Settings
+    -- Sets the default configuration for an LSP client (or all clients if the special name "*" is used).
+    ---@alias lazyvim.lsp.Config vim.lsp.Config|{mason?:boolean, enabled?:boolean, keys?:LazyKeysLspSpec[]}
+    ---@type table<string, lazyvim.lsp.Config|boolean>
+    servers = {
+      fsautocomplete = require("ionide").setup({
+            -- set things here if you want to override defaults otherwise just send in {} like require("ionide").setup({})
+        IonideNvimSettings = {
+        },
+        cmd = {
+          vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete.cmd"),
+        },
+        settings = {
+          FSharp = {
           },
         },
-        {
-        -- very recommended to use nvim-lspconfig, as it takes care of much of the management of starting Ionide,
-          "neovim/nvim-lspconfig",
-          version = false, -- last release is way too old
-          opts = {
-            servers = {
-              ---@type IonideOptions
-              ionide = {
-                IonideNvimSettings = {
-                },
-                cmd = {
-                  vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete.cmd"),
-                },
-                settings = {
-                  FSharp = {
-                  },
-                },
-              },
-            },
-            -- you can do any additional lsp server setup here
-            -- return true if you don't want this server to be setup with lspconfig
-            ---@type table<string, fun(server:string, opts:_.lspconfig.options):boolean?>
-            setup = {
-            --- ***VERY IMPORTANT*** 
-            --- if you don't wan't both ionide AND fsautocomplete to 
-            ---attach themselves to every fsharp file (you don't, trust me), you
-            --- need to make sure that fsautocomplete doesn't get it's setup function called. 
-            --- from within a lazy.nvim setup it simply means that you do the following:  
-              fsautocomplete = function(_, _)
-                return true
-              end,
-            --- and then pass the opts in from up above. 
-              ionide = function(_, opts)
-                require("ionide").setup(opts)
-              end,
-            },
-          },
-        },
-      },
+      }),
     },
   },
 }
@@ -228,31 +111,6 @@ Opening either `*.fs`, `*.fsi` or `*.fsx` files should trigger syntax highlighti
 Will's fork feature: opening a `*.fsproj` file will trigger Ionide to load. Yeah, It's awesome. 
 
 ### Commands
-
-To be added as requested for F#-specific features.
-
-  - "Resets the current FSI session."
-#### `:IonideShowConfigs`
-  - "Shows the merged config." 
-
-#### `:IonideShowWorkspaceFolders`
-  - "Shows the workspace folders that fsac has loaded." 
-#### `:IonideLoadProjects`
-  - "load additional projects with this if you like" 
-#### `:IonideShowNvimSettings`
-  - "Shows just the IonideNvimSettings portion of the config." 
-
-#### `:IonideShowAllLoadedProjectInfo`
-  - "Show all currently loaded Project Info" 
-
-#### `:IonideShowLoadedProjects`
-  - "Shows just the project names that have been loaded." 
-
-#### `:IonideLoadProjects <files>+`
-  - Loads specified projects (`sln` or `fsproj`).
-
-#### `:IonideWorkspacePeek`
-  - Allows for the selection of specific [sln's](technically just using it as a new starting point to look for projects, sln files not supported in FSAC) to be loaded in addition to the one that it might have automatically found. 
 
 
 ### Working with F# Interactive
@@ -314,7 +172,7 @@ ionide ={
      --- Windows:  vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete.cmd"),
      --- Non - Windows(I think..):  vim.fs.normalize(vim.fn.stdpath("data").."/mason/bin/fsautocomplete"),
   cmd = { "fsautocomplete" },
-  filetypes = { "fsharp" },
+  filetypes = { "fsharp", "fsharp_project" },
   handlers = {
   -- Ionide registers handlers for these lsp requests by default. 
   --  do not copy paste this portion, just showing that there is some handling of these here 
@@ -332,7 +190,6 @@ ionide ={
   },
   log_level = 2,
   message_level = 2,
-  name = "ionide",
 
   --- this is what will run on every buffer that the client attaches itself to. 
   --- it's a function that takes in (LspClient , bufferNumber) and does whatever you want after that
@@ -344,17 +201,40 @@ ionide ={
 
   -- this is the function used to find a root directory to pass to the Lsp. 
   -- for root dir, it should be fine to leave it as is, but you can change it if you need to.
-  -- it is a function that gives a function that takes in a string which is the filename being opened. 
   -- for reference, this is how ionide has implemented this: 
-    -- function M.GitFirstRootDir(n)
-    --   local root
-    --   root = util.find_git_ancestor(n)
-    --   root = root or util.root_pattern("*.sln")(n)
-    --   root = root or util.root_pattern("*.fsproj")(n)
-    --   root = root or util.root_pattern("*.fsx")(n)
-    --   return root
-    -- end
-  -- root_dir = M.GitFirstRootDir,
+
+-- function M.GetRoot(n)
+--   local root
+--   root = root or util.root_pattern("*.slnx")(n)
+--   if root then
+--     return root
+--   end
+--   root = root or util.root_pattern("*.sln")(n)
+--   if root then
+--     return root
+--   end
+--   root = root or util.root_pattern("*.fsproj")(n)
+--   if root then
+--     return root
+--   end
+--   root = root or util.root_pattern("*.fsx")(n)
+--   if root then
+--     return root
+--   end
+--   root = util.find_git_ancestor(n)
+--   if root then
+--     return root
+--   end
+--   return root
+-- end
+
+  -- root_dir = function(bufnr, on_dir)
+  --   local bufnr = vim.api.nvim_get_current_buf()
+  --   local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+  --   local root = M.GetRoot(bufname)
+  --
+  --   return on_dir(root)
+  -- end,
 
 
   --- this is the settings table. it's what is passed to fsautocomplete on the UpdateSeverConfiguration function call, 
