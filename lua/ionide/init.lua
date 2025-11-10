@@ -402,7 +402,9 @@ M.DefaultLspConfig = {
   filetypes = { "fsharp", "fsharp_project" },
   name = "ionide",
   cmd = M.DefaultNvimSettings.FsautocompleteCommand,
-  root_markers = { "*.slnx", "*.sln", "*.fsproj", ".git" },
+
+  root_dir = M.GetRoot,
+  -- root_markers = { "*.slnx", "*.sln", "*.fsproj", ".git" },
   -- autostart = true,
   settings = { FSharp = M.DefaultServerSettings },
   log_level = vim.lsp.protocol.MessageType.Warning,
