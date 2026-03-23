@@ -1044,7 +1044,14 @@ end
 ---@return boolean
 function M.IsIonideClient(client)
   if not client then return false end
-  return client.name == "ionide" or client.name == "fsautocomplete"
+  -- Accept by well-known name first — cheap and covers the common case.
+  if client.name == "ionide" or client.name == "fsautocomplete" then return true end
+  -- Also accept any client that advertises an fsharp-specific custom method.
+  -- This allows users who configure the LSP client under a custom name (e.g.
+  -- via a system package manager or a wrapper config) to still be recognised,
+  -- as long as the server actually speaks the fsautocomplete protocol.
+  if client.supports_method and client:supports_method("fsharp/documentation") then return true end
+  return false
 end
 
 function M.GetIonideClients(filter)
