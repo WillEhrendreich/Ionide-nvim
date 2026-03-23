@@ -704,7 +704,9 @@ M.DefaultLspConfig = {
   cmd = M.DefaultNvimSettings.FsautocompleteCommand,
 
   root_dir = function(bufnr, on_dir)
-    local bufnr = vim.api.nvim_get_current_buf()
+    -- NOTE: do NOT shadow `bufnr` — it is the correct buffer passed by Neovim 0.10+.
+    -- The old `local bufnr = vim.api.nvim_get_current_buf()` introduced a race
+    -- when multiple files were opened simultaneously (wrong buffer's root was used).
     local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
     local root = M.GetRoot(bufname)
 
@@ -734,38 +736,13 @@ end
 ---@param path string
 ---@return lsp.TextDocumentIdentifier
 function M.TextDocumentIdentifier(path)
-  -- Handle compatibility with different Neovim versions
-  local uv = vim.uv or vim.loop
-  local is_windows = false
-
-  if uv and uv.os_uname then
-    is_windows = uv.os_uname().version:match("Windows") ~= nil
-  else
-    -- Fallback detection for test environments
-    is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
-  end
-
-  local usr_ss_opt
-  if is_windows then
-    usr_ss_opt = vim.o.shellslash
-    vim.o.shellslash = true
-  end
-
-  local uri = vim.fn.fnamemodify(vim.fs.normalize(path), ":p")
-
-  if string.sub(uri, 1, 1) == "/" then
-    uri = "file://" .. uri
-  else
-    uri = "file:///" .. uri
-  end
-  if is_windows then
-    vim.o.shellslash = usr_ss_opt
-  end
-  ---
+  -- vim.uri_from_fname handles Windows drive letters, forward/backslash normalisation,
+  -- and URI percent-encoding correctly — including on Windows with or without shellslash.
+  -- This replaces the previous hand-rolled implementation that temporarily mutated
+  -- vim.o.shellslash (a global side effect that could be left permanently changed if
+  -- the code inside errored before restoring the original value).
   ---@type lsp.TextDocumentIdentifier
-  return {
-    uri = uri,
-  }
+  return { uri = vim.uri_from_fname(vim.fs.normalize(path)) }
 end
 
 ---Creates an lsp.Position from a line and character number
@@ -1502,10 +1479,23 @@ function M.IonideRenameFileInteractive()
   -- Use the first fsproj if there are multiple (edge case — single fsproj dirs are normal)
   local fsproj_path = vim.fs.normalize(fsproj_files[1])
 
-  -- Virtual path = path of the file relative to the fsproj directory
+  -- Virtual path = path of the file relative to the fsproj directory.
   -- e.g. fsproj_dir = "/repo/MyProject", old_full_path = "/repo/MyProject/src/Game.fs"
   -- → virtual_path = "src/Game.fs"
-  local virtual_path = old_full_path:sub(#fsproj_dir + 2) -- +2 to skip trailing separator
+  --
+  -- vim.fs.normalize() returns paths WITHOUT a trailing separator, so fsproj_dir is
+  -- e.g. "/repo/MyProject" (no trailing "/"). We need to skip exactly one separator
+  -- character (+1), not +2 which would eat the first character of the relative path.
+  -- Use vim.fs.relpath when available (Neovim 0.10+); fall back to the substring
+  -- arithmetic on older versions.
+  local virtual_path
+  if vim.fs.relpath then
+    virtual_path = vim.fs.relpath(fsproj_dir, old_full_path)
+  else
+    -- fsproj_dir has no trailing separator (vim.fs.normalize guarantee), so skip
+    -- exactly len+1 characters to consume the one "/" that separates dir from file.
+    virtual_path = old_full_path:sub(#fsproj_dir + 1 + 1) -- +1 for separator
+  end
 
   local old_filename = vim.fn.fnamemodify(old_full_path, ":t")
   local old_dir = vim.fn.fnamemodify(old_full_path, ":h")
@@ -1525,27 +1515,33 @@ function M.IonideRenameFileInteractive()
 
       local new_full_path = old_dir .. "/" .. new_name
 
-      -- Step 1: rename on disk
-      local ok, err = vim.uv.fs_rename(old_full_path, new_full_path)
-      if not ok then
-        vim.notify("Ionide: disk rename failed: " .. (err or "unknown error"), vim.log.levels.ERROR)
-        return
-      end
-
-      -- Step 2: update the .fsproj via FSAC
+      -- Step 1: update the .fsproj via FSAC FIRST.
+      -- If FSAC fails we abort before touching the disk — keeping the project consistent.
+      -- (Old order was disk-first, which left a renamed file with a stale .fsproj entry
+      -- when FSAC returned an error.)
       M.CallFSharpRenameFile(fsproj_path, virtual_path, new_name, function(rename_err, _)
         if rename_err then
-          vim.notify("Ionide: fsproj rename failed: " .. vim.inspect(rename_err), vim.log.levels.WARN)
-          -- Disk rename already happened — warn but don't try to undo it.
+          vim.notify("Ionide: fsproj rename failed — disk file NOT renamed: " .. vim.inspect(rename_err), vim.log.levels.ERROR)
+          return
         end
-      end)
 
-      -- Step 3: point the buffer at the new path and reload
-      -- schedule so LSP detach/reattach cycle doesn't race with the rename
-      vim.schedule(function()
-        vim.api.nvim_buf_set_name(bufnr, new_full_path)
-        vim.cmd("edit")
-        M.notify("Renamed " .. old_filename .. " → " .. new_name, vim.log.levels.INFO)
+        -- Step 2: rename on disk (only reached when FSAC succeeded)
+        local ok, err = vim.uv.fs_rename(old_full_path, new_full_path)
+        if not ok then
+          vim.notify(
+            "Ionide: disk rename failed (WARNING: .fsproj was already updated): " .. (err or "unknown error"),
+            vim.log.levels.ERROR
+          )
+          return
+        end
+
+        -- Step 3: point the buffer at the new path and reload.
+        -- Scheduled so the LSP detach/reattach cycle doesn't race with the rename.
+        vim.schedule(function()
+          vim.api.nvim_buf_set_name(bufnr, new_full_path)
+          vim.cmd("edit")
+          M.notify("Renamed " .. old_filename .. " → " .. new_name, vim.log.levels.INFO)
+        end)
       end)
     end
   )
@@ -1586,8 +1582,21 @@ function M.OnLspAttach(client, bufnr)
   -- Only registered when AddFSharpKeymaps is not explicitly false, giving users
   -- a clean opt-out if they prefer their own bindings.
   if settings.AddFSharpKeymaps ~= false then
+    -- Helper: returns true when no buffer-local keymap for `lhs` exists in `mode` yet.
+    -- This prevents Ionide from silently overwriting a map already set by LazyVim
+    -- (or another plugin) in its own LspAttach handler, depending on handler order.
+    local function no_buf_map(mode, lhs)
+      local existing = vim.fn.maparg(lhs, mode, false, true)
+      -- maparg returns a table when a mapping exists; an empty string when it doesn't.
+      -- For buffer-local maps, the table will have buffer=true (or a buffer number).
+      if type(existing) == "table" and existing.buffer and existing.buffer ~= 0 then
+        return false
+      end
+      return true
+    end
+
     -- Symbol rename — available workspace-wide via FSAC's renameProvider
-    if supports_method(client, "textDocument/rename", "RenameProvider") then
+    if supports_method(client, "textDocument/rename", "RenameProvider") and no_buf_map("n", "<leader>cr") then
       vim.keymap.set("n", "<leader>cr", vim.lsp.buf.rename, {
         buffer = bufnr,
         desc = "Rename F# symbol (workspace-wide)",
@@ -1598,15 +1607,19 @@ function M.OnLspAttach(client, bufnr)
     -- generate union cases, add explicit type annotation, remove unused opens, …)
     -- Works in both normal and visual mode; visual mode passes the selection range.
     if supports_method(client, "textDocument/codeAction", "CodeActionProvider") then
-      vim.keymap.set({ "n", "v" }, "<leader>ca", vim.lsp.buf.code_action, {
-        buffer = bufnr,
-        desc = "F# code actions (fixes & refactors)",
-      })
+      if no_buf_map("n", "<leader>ca") then
+        vim.keymap.set({ "n", "v" }, "<leader>ca", vim.lsp.buf.code_action, {
+          buffer = bufnr,
+          desc = "F# code actions (fixes & refactors)",
+        })
+      end
     end
 
     -- File rename — renames the .fs file on disk AND updates the .fsproj entry.
     -- Overrides the generic Snacks file-rename which calls workspace/willRenameFiles
     -- (a FSAC stub that does nothing).
+    -- <leader>cR is Ionide-specific — always set it; it's intentionally more capable
+    -- than any generic file-rename that might be registered.
     vim.keymap.set("n", "<leader>cR", function()
       M.IonideRenameFileInteractive()
     end, {
@@ -1821,6 +1834,14 @@ local fsiWidth = 0
 local fsiHeight = 0
 
 vim.api.nvim_create_user_command("IonideResetIonideBufferNumber", function()
+  -- Stop the existing FSI job before clearing the buffer reference.
+  -- Previously only FsiBuffer was reset to -1, leaving fsiJob pointing at
+  -- a live (leaked) terminal job. The next OpenFsi call would start a NEW job
+  -- while the old one kept running in the background.
+  if fsiJob > 0 then
+    pcall(vim.fn.jobstop, fsiJob)
+    fsiJob = -1
+  end
   FsiBuffer = -1
   vim.notify("Fsi buffer is now set to number " .. vim.inspect(FsiBuffer))
 end, {
@@ -1995,11 +2016,17 @@ function M.GetVisualSelection(keepSelectionIfNotInBlockMode, advanceCursorOneLin
   keepSelectionIfNotInBlockMode = keepSelectionIfNotInBlockMode or false
   -- advance cursor one line defaults to true, but is turned off for
   -- visual block mode regardless.
+  -- NOTE: `advanceCursorOneLine or true` is a Lua boolean trap: if the caller passes
+  -- `false` the expression still evaluates to `true` because `false or true == true`.
+  -- Use an explicit nil-check instead.
   advanceCursorOneLine = (function()
     if keepSelectionIfNotInBlockMode == true then
       return false
     else
-      return advanceCursorOneLine or true
+      if advanceCursorOneLine == nil then
+        return true
+      end
+      return advanceCursorOneLine
     end
   end)()
 
