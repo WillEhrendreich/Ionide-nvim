@@ -244,6 +244,7 @@
 ---@field AutomaticReloadWorkspace boolean
 ---@field AutomaticCodeLensRefresh boolean
 ---@field ShowSignatureOnCursorMove boolean
+---@field UseIonideDocumentationHover boolean
 ---@field FsiCommand string
 ---@field FsiKeymap string
 ---@field FsiWindowCommand string
@@ -261,6 +262,10 @@
 ---@field FsiStdOutFileName string
 ---@field FsiKeymapSend string
 ---@field FsiKeymapToggle string
+--- Whether Ionide should register buffer-local keymaps for F#-specific LSP actions
+--- (rename symbol, code actions, file rename). Defaults to true.
+--- Set to false if you define your own keymaps for these actions.
+---@field AddFSharpKeymaps boolean
 
 ---@class lspSettings
 ---@field FSharp table

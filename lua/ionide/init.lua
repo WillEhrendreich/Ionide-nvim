@@ -1,5 +1,9 @@
 local M = {}
 
+M.State = {
+  test_detection = {},
+}
+
 ---@class InternalIonideNvimConfig
 ---@field exe? string|string[]
 ---@field config vim.lsp.ClientConfig
@@ -67,6 +71,282 @@ end
 ---@return boolean
 local function stringEndsWith(s, suffix)
   return s:sub(-#suffix) == suffix
+end
+
+local function notify_content(level)
+  return function(err, rs, ctx, config)
+    if rs and rs.Content then
+      M.notify(rs.Content, level)
+    end
+  end
+end
+
+local function create_buf_autocmd(events, group_name, bufnr, callback)
+  local group = vim.api.nvim_create_augroup(group_name .. bufnr, { clear = true })
+  vim.api.nvim_create_autocmd(events, {
+    group = group,
+    buffer = bufnr,
+    callback = callback,
+  })
+end
+
+local function register_fsproj_command(name, usage, desc, argc, callback)
+  vim.api.nvim_create_user_command(name, function(opts)
+    if #opts.fargs < argc then
+      M.notify("Usage: " .. usage, vim.log.levels.ERROR)
+      return
+    end
+    callback(opts.fargs)
+  end, { nargs = "+", desc = desc })
+end
+
+local function split_lines(text)
+  if not text or text == "" then
+    return {}
+  end
+  return vim.split(text, "\n")
+end
+
+local function trim_empty_tail(lines)
+  while #lines > 0 and lines[#lines] == "" do
+    table.remove(lines)
+  end
+  return lines
+end
+
+local function decode_json_payload(content)
+  if not content or content == "" then
+    return nil
+  end
+  if vim.json and vim.json.decode then
+    local ok, decoded = pcall(vim.json.decode, content)
+    if ok then
+      return decoded
+    end
+  end
+  if vim.fn and vim.fn.json_decode then
+    local ok, decoded = pcall(vim.fn.json_decode, content)
+    if ok then
+      return decoded
+    end
+  end
+  return nil
+end
+
+local function formatted_documentation_to_markdown(payload)
+  local decoded = decode_json_payload(payload)
+  if not decoded or decoded.Kind ~= "formattedDocumentation" or type(decoded.Data) ~= "table" then
+    return nil
+  end
+
+  local data = decoded.Data
+  local lines = {}
+
+  if data.Signature and data.Signature ~= "" then
+    vim.list_extend(lines, { "```fsharp", data.Signature, "```", "" })
+  end
+
+  if data.Comment and data.Comment ~= "" then
+    vim.list_extend(lines, split_lines(data.Comment))
+    table.insert(lines, "")
+  end
+
+  if type(data.FooterLines) == "table" and #data.FooterLines > 0 then
+    vim.list_extend(lines, data.FooterLines)
+  end
+
+  return #trim_empty_tail(lines) > 0 and lines or nil
+end
+
+local function formatted_documentation_metadata(payload)
+  local decoded = decode_json_payload(payload)
+  if not decoded or decoded.Kind ~= "formattedDocumentation" or type(decoded.Data) ~= "table" then
+    return nil
+  end
+  return decoded.Data
+end
+
+local function help_payload_to_markdown(payload)
+  local decoded = decode_json_payload(payload)
+  if not decoded or decoded.Kind ~= "help" then
+    return nil
+  end
+  if type(decoded.Data) ~= "string" or decoded.Data == "" then
+    return nil
+  end
+  return split_lines(decoded.Data)
+end
+
+local function unresolved_external_doc_note(symbolRequest)
+  if not symbolRequest then
+    return nil
+  end
+  local lines = {
+    "_FsAutoComplete could not resolve external XML documentation for this symbol._",
+  }
+  if symbolRequest.Assembly and symbolRequest.Assembly ~= "" then
+    table.insert(lines, "Assembly: `" .. symbolRequest.Assembly .. "`")
+  end
+  if symbolRequest.XmlSig and symbolRequest.XmlSig ~= "" then
+    table.insert(lines, "XmlDocSig: `" .. symbolRequest.XmlSig .. "`")
+  end
+  return lines
+end
+
+local function extract_documentation_symbol_request(markdown_lines)
+  local text = table.concat(markdown_lines or {}, "\n")
+  local encoded = text:match("command:fsharp%.showDocumentation%?([^'%)%s>]+)")
+  if not encoded then
+    return nil
+  end
+
+  local decoded = vim.fn.json_decode(vim.uri_decode(encoded))
+  local first = type(decoded) == "table" and decoded[1] or nil
+  if not first or not first.XmlDocSig or first.XmlDocSig == "" or not first.AssemblyName or first.AssemblyName == "" then
+    return nil
+  end
+
+  return {
+    XmlSig = first.XmlDocSig,
+    Assembly = first.AssemblyName,
+  }
+end
+
+local function hover_result_to_lines(result)
+  if not result or not result.contents then
+    return {}
+  end
+
+  local contents = result.contents
+  if type(contents) == "string" then
+    return split_lines(contents)
+  end
+
+  if type(contents) == "table" and contents.kind and contents.value then
+    return split_lines(contents.value)
+  end
+
+  local lines = {}
+  if type(contents) == "table" then
+    for _, item in ipairs(contents) do
+      if type(item) == "string" then
+        vim.list_extend(lines, split_lines(item))
+      elseif type(item) == "table" and item.value then
+        if item.language then
+          vim.list_extend(lines, { "```" .. item.language })
+          vim.list_extend(lines, split_lines(item.value))
+          vim.list_extend(lines, { "```" })
+        else
+          vim.list_extend(lines, split_lines(item.value))
+        end
+      end
+    end
+  end
+  return lines
+end
+
+local function sanitize_hover_lines(lines)
+  local sanitized = {}
+  for _, line in ipairs(lines or {}) do
+    local cleaned = line
+      :gsub("<a href='command:fsharp%.showDocumentation%?[^']*'>", "")
+      :gsub("</a>", "")
+      :gsub("^%s*Open the documentation%s*$", "")
+    if cleaned ~= "" then
+      table.insert(sanitized, cleaned)
+    end
+  end
+  local filtered = {}
+  local previous_blank = false
+  for _, line in ipairs(sanitized) do
+    local is_blank = line:match("^%s*$") ~= nil
+    if not (is_blank and previous_blank) then
+      table.insert(filtered, line)
+    end
+    previous_blank = is_blank
+  end
+  return trim_empty_tail(filtered)
+end
+
+local function strip_redundant_signature_block(hover_lines)
+  if not hover_lines or vim.tbl_isempty(hover_lines) then
+    return hover_lines
+  end
+
+  local result = {}
+  local i = 1
+  while i <= #hover_lines do
+    if hover_lines[i]:match("^```") then
+      i = i + 1
+      while i <= #hover_lines and not hover_lines[i]:match("^```") do
+        i = i + 1
+      end
+      if i <= #hover_lines and hover_lines[i]:match("^```") then
+        i = i + 1
+      end
+    else
+      table.insert(result, hover_lines[i])
+      i = i + 1
+    end
+  end
+  return trim_empty_tail(result)
+end
+
+local function has_nonempty_line(lines)
+  for _, line in ipairs(lines or {}) do
+    if line and line:match("%S") then
+      return true
+    end
+  end
+  return false
+end
+
+local function diagnostic_severity_label(severity)
+  if not vim.diagnostic or not vim.diagnostic.severity then
+    return "INFO"
+  end
+  for name, value in pairs(vim.diagnostic.severity) do
+    if value == severity then
+      return name
+    end
+  end
+  return "INFO"
+end
+
+local function diagnostics_to_markdown(bufnr, line)
+  if not vim.diagnostic or not vim.diagnostic.get then
+    return {}
+  end
+
+  local diagnostics = vim.diagnostic.get(bufnr, { lnum = line })
+  if not diagnostics or vim.tbl_isempty(diagnostics) then
+    return {}
+  end
+
+  local lines = { "", "### Diagnostics" }
+  for _, diagnostic in ipairs(diagnostics) do
+    local severity = diagnostic_severity_label(diagnostic.severity)
+    local source = diagnostic.source and (" [" .. diagnostic.source .. "]") or ""
+    table.insert(lines, string.format("- **%s**%s: %s", severity, source, diagnostic.message or ""))
+  end
+  return lines
+end
+
+local function merge_docs_and_diagnostics(doc_lines, diagnostic_lines)
+  local lines = {}
+  if doc_lines and not vim.tbl_isempty(doc_lines) then
+    vim.list_extend(lines, doc_lines)
+  end
+  if diagnostic_lines and not vim.tbl_isempty(diagnostic_lines) then
+    vim.list_extend(lines, diagnostic_lines)
+  end
+  return trim_empty_tail(lines)
+end
+
+local function current_position_params()
+  local line, col = unpack(vim.api.nvim_win_get_cursor(0))
+  local file = vim.api.nvim_buf_get_name(0)
+  return file, line - 1, col
 end
 
 function M.notify(msg, level, opts)
@@ -155,15 +435,33 @@ M.GetDefaultDotnetArgsForRoot = function(root)
   return args
 end
 
-M.projectFolders = {}
-
----@type table<string,ProjectInfo>
-M.Projects = {}
-
 ---@table<string,function>
 M.Handlers = {
   [""] = function(err, rs, ctx, config)
     M.notify("if you're seeing this called, something went wrong, it's key is literally an empty string.  ")
+  end,
+  ["fsharp/notifyWorkspace"] = notify_content(vim.log.levels.DEBUG),
+  ["fsharp/notifyWorkspacePeek"] = notify_content(vim.log.levels.DEBUG),
+  ["fsharp/notifyCancel"] = notify_content(vim.log.levels.DEBUG),
+  ["fsharp/fileParsed"] = notify_content(vim.log.levels.DEBUG),
+  ["fsharp/documentAnalyzed"] = function(err, rs, ctx, config)
+    if not (M.MergedConfig and M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.AutomaticCodeLensRefresh) then
+      return
+    end
+
+    local textDocument = rs and rs.TextDocument
+    local uri = textDocument and (textDocument.uri or textDocument.Uri)
+    if not uri then
+      return
+    end
+
+    local bufnr = vim.uri_to_bufnr and vim.uri_to_bufnr(uri) or 0
+    vim.lsp.codelens.refresh({ bufnr = bufnr })
+  end,
+  ["fsharp/testDetected"] = function(err, rs, ctx, config)
+    if rs and rs.File then
+      M.State.test_detection[rs.File] = rs.Tests or {}
+    end
   end,
 }
 
@@ -379,6 +677,7 @@ M.DefaultNvimSettings = {
   AutomaticReloadWorkspace = false,
   AutomaticCodeLensRefresh = false,
   ShowSignatureOnCursorMove = false,
+  UseIonideDocumentationHover = false,
   FsiCommand = "dotnet fsi",
   FsiKeymap = "vscode",
   FsiWindowCommand = "botright 10new",
@@ -394,6 +693,7 @@ M.DefaultNvimSettings = {
   },
   FsiKeymapSend = "<M-cr>",
   FsiKeymapToggle = "<M-@>",
+  AddFSharpKeymaps = true,
 }
 
 ---@type IonideOptions
@@ -415,6 +715,7 @@ M.DefaultLspConfig = {
   settings = { FSharp = M.DefaultServerSettings },
   log_level = vim.lsp.protocol.MessageType.Warning,
   message_level = vim.lsp.protocol.MessageType.Warning,
+  handlers = M.Handlers,
   capabilities = vim.lsp.protocol.make_client_capabilities(),
 }
 
@@ -492,7 +793,7 @@ end
 ---@return FSharpProjectParams
 function M.CreateFSharpProjectParams(projectUri)
   local tdi = M.TextDocumentIdentifier(projectUri)
-  vim.notify("projectUri: " .. vim.inspect(tdi))
+  M.notify("projectUri: " .. vim.inspect(tdi), vim.log.levels.DEBUG)
   return {
 
     Project = tdi,
@@ -512,7 +813,9 @@ function M.CreateFSharpWorkspacePeekRequest(directory, deep, excludedDirs)
   }
 end
 
----creates an fsdn request.. probabably useless now..
+---creates an fsdn request
+---NOTE: FSAC docs indicate this service is no longer available.
+---@deprecated Use online F# documentation search instead.
 ---@param query string
 ---@return FsdnRequest
 function M.FsdnRequest(query)
@@ -543,16 +846,245 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.Call(method, params, handler)
-  local function on_unsupported()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local clients = M.GetIonideClients({ bufnr = bufnr })
+  if #clients == 0 then
+    M.notify("LSP method " .. method .. " is not supported by any ionide LSP client", vim.log.levels.WARN)
+    return {}, function() end
+  end
+
+  local request_ids = {}
+  local function cancel_all()
+    for client_id, request_id in pairs(request_ids) do
+      local client = vim.lsp.get_client_by_id(client_id)
+      if client and client.cancel_request then
+        pcall(client.cancel_request, client, request_id)
+      end
+    end
+  end
+
+  for _, client in ipairs(clients) do
+    local ok, request_id = pcall(function()
+      return client:request(method, params, handler, bufnr)
+    end)
+    if ok and request_id ~= nil then
+      request_ids[client.id] = request_id
+    end
+  end
+
+  if vim.tbl_isempty(request_ids) then
     M.notify("LSP method " .. method .. " is not supported by any ionide LSP client", vim.log.levels.WARN)
   end
-  return vim.lsp.buf_request(0, method, params, handler, on_unsupported)
+
+  return request_ids, cancel_all
+end
+
+function M.ShowDocumentationHover(opts)
+  local config = opts or {}
+  local bufnr = vim.api.nvim_get_current_buf()
+  -- Bail out silently if no Ionide (FSAC) client is attached to this buffer.
+  -- Prevents "Method not found: fsharp/documentation" errors and
+  -- "fsharp/f1Help is not supported" warnings when K is pressed in non-F# buffers.
+  if vim.tbl_isempty(M.GetIonideClients({ bufnr = bufnr })) then
+    vim.lsp.buf.hover(config)
+    return
+  end
+  local filePath, line, character = current_position_params()
+  local debug_hover = config.debug == true
+  local function trace(...)
+    if not debug_hover then
+      return
+    end
+    local parts = { "[Ionide hover]" }
+    for i = 1, select("#", ...) do
+      table.insert(parts, tostring(select(i, ...)))
+    end
+    vim.notify(table.concat(parts, " "))
+  end
+
+  local function show_lines(doc_lines)
+    if not has_nonempty_line(doc_lines) then
+      trace("show_lines", "skipped-empty")
+      return false
+    end
+    local merged = merge_docs_and_diagnostics(doc_lines or {}, diagnostics_to_markdown(bufnr, line))
+    if not vim.tbl_isempty(merged) then
+      trace("show_lines", "opening-float", #merged)
+      vim.lsp.util.open_floating_preview(merged, "markdown", {
+        border = config.border,
+        focus_id = "ionide/fsharp/documentation",
+      })
+      return true
+    end
+    trace("show_lines", "merged-empty")
+    return false
+  end
+
+  local function fallback_hover()
+    trace("fallback_hover")
+    vim.lsp.buf.hover(config)
+  end
+
+  local function show_sanitized_hover(results)
+    local hover_lines = {}
+    for _, resp in pairs(results or {}) do
+      if resp and resp.result then
+        vim.list_extend(hover_lines, sanitize_hover_lines(hover_result_to_lines(resp.result)))
+      end
+    end
+    if not has_nonempty_line(hover_lines) then
+      return false
+    end
+    return show_lines(hover_lines)
+  end
+
+  local function sanitized_hover_lines(results)
+    local hover_lines = {}
+    for _, resp in pairs(results or {}) do
+      if resp and resp.result then
+        vim.list_extend(hover_lines, sanitize_hover_lines(hover_result_to_lines(resp.result)))
+      end
+    end
+    if not has_nonempty_line(hover_lines) then
+      return nil
+    end
+    return hover_lines
+  end
+
+  local function show_combined_lines(primary_lines, secondary_lines, extra_lines)
+    local merged = {}
+    if primary_lines and not vim.tbl_isempty(primary_lines) then
+      vim.list_extend(merged, primary_lines)
+    end
+    if secondary_lines and not vim.tbl_isempty(secondary_lines) then
+      if has_nonempty_line(merged) and has_nonempty_line(secondary_lines) then
+        table.insert(merged, "")
+      end
+      vim.list_extend(merged, secondary_lines)
+    end
+    if extra_lines and not vim.tbl_isempty(extra_lines) then
+      if has_nonempty_line(merged) and has_nonempty_line(extra_lines) then
+        table.insert(merged, "")
+      end
+      vim.list_extend(merged, extra_lines)
+    end
+    return show_lines(merged)
+  end
+
+  return M.CallFSharpDocumentation(filePath, line, character, function(err, result, ctx, lsp_config)
+    trace("documentation", err and "error" or "ok", result and result.Content and "has-content" or "no-content")
+    if err then
+      if config.silent ~= true then
+        M.notify(err.message or "Failed to fetch F# documentation", vim.log.levels.ERROR)
+      end
+      return
+    end
+
+    local lines = result and result.Content and formatted_documentation_to_markdown(result.Content)
+    local documentationMetadata = result and result.Content and formatted_documentation_metadata(result.Content)
+    trace("documentation-lines", has_nonempty_line(lines) and "yes" or "no")
+
+    return vim.lsp.buf_request_all(0, "textDocument/hover", M.TextDocumentPositionParams(filePath, line, character), function(results)
+      trace("hover-results", results and "received" or "nil")
+      local symbolRequest = nil
+      for _, resp in pairs(results or {}) do
+        if resp and resp.result then
+          symbolRequest = extract_documentation_symbol_request(hover_result_to_lines(resp.result)) or symbolRequest
+        end
+      end
+      trace("symbol-request", symbolRequest and (symbolRequest.XmlSig .. " @ " .. symbolRequest.Assembly) or "none")
+
+      if symbolRequest then
+        return M.CallFSharpDocumentationSymbol(symbolRequest.XmlSig, symbolRequest.Assembly, function(symbolErr, symbolResult)
+          trace("documentationSymbol", symbolErr and "error" or "ok", symbolResult and symbolResult.Content and "has-content" or "no-content")
+          local symbolLines = symbolResult and symbolResult.Content and formatted_documentation_to_markdown(symbolResult.Content)
+          local symbolMetadata = symbolResult and symbolResult.Content and formatted_documentation_metadata(symbolResult.Content)
+          local unresolvedNote = nil
+          if not has_nonempty_line(symbolLines) or (symbolMetadata and symbolMetadata.Comment == "") then
+            unresolvedNote = unresolved_external_doc_note(symbolRequest)
+          end
+
+          return M.F1Help(filePath, line, character, function(helpErr, helpResult)
+            trace("f1help", helpErr and "error" or "ok", helpResult and helpResult.Content and "has-content" or "no-content")
+            local helpLines = helpResult and helpResult.Content and help_payload_to_markdown(helpResult.Content)
+            local hoverLines = strip_redundant_signature_block(sanitized_hover_lines(results))
+            local extra = {}
+            if helpLines and not vim.tbl_isempty(helpLines) then
+              vim.list_extend(extra, helpLines)
+            end
+            if hoverLines and not vim.tbl_isempty(hoverLines) then
+              vim.list_extend(extra, hoverLines)
+            end
+            if unresolvedNote and not vim.tbl_isempty(unresolvedNote) then
+              if has_nonempty_line(extra) then
+                table.insert(extra, "")
+              end
+              vim.list_extend(extra, unresolvedNote)
+            end
+
+            if show_combined_lines(symbolLines or lines, nil, extra) then
+              trace("final", "combined-symbol-success")
+              return
+            end
+            trace("final", "combined-symbol-failed")
+            fallback_hover()
+          end)
+        end)
+      end
+
+      return M.F1Help(filePath, line, character, function(helpErr, helpResult)
+        trace("f1help", helpErr and "error" or "ok", helpResult and helpResult.Content and "has-content" or "no-content")
+        local helpLines = helpResult and helpResult.Content and help_payload_to_markdown(helpResult.Content)
+        local hoverLines = strip_redundant_signature_block(sanitized_hover_lines(results))
+        local unresolved = documentationMetadata and documentationMetadata.Comment == "" and { "", "_FsAutoComplete could not resolve external XML documentation for this symbol._" } or nil
+        local extra = {}
+        if helpLines and not vim.tbl_isempty(helpLines) then
+          vim.list_extend(extra, helpLines)
+        end
+        if hoverLines and not vim.tbl_isempty(hoverLines) then
+          vim.list_extend(extra, hoverLines)
+        end
+        if unresolved and not vim.tbl_isempty(unresolved) then
+          if has_nonempty_line(extra) then
+            table.insert(extra, "")
+          end
+          vim.list_extend(extra, unresolved)
+        end
+
+        if show_combined_lines(lines, nil, extra) then
+          trace("final", "combined-doc-success")
+          return
+        end
+        trace("final", "combined-doc-failed")
+        fallback_hover()
+      end)
+    end)
+  end)
+end
+
+---Returns true if the given LSP client is an Ionide / fsautocomplete client.
+---@param client vim.lsp.Client
+---@return boolean
+function M.IsIonideClient(client)
+  if not client then return false end
+  return client.name == "ionide" or client.name == "fsautocomplete"
+end
+
+function M.GetIonideClients(filter)
+  local candidates = vim.lsp.get_clients(filter or {})
+  local results = {}
+  for _, client in ipairs(candidates) do
+    if M.IsIonideClient(client) then
+      table.insert(results, client)
+    end
+  end
+  return results
 end
 
 function M.CallLspNotify(method, params)
   -- Check if any ionide clients are available (with safety check for test environment)
   if vim.lsp and vim.lsp.get_clients then
-    local clients = vim.lsp.get_clients({ name = "ionide" })
+    local clients = M.GetIonideClients({ bufnr = vim.api.nvim_get_current_buf() })
     if #clients == 0 then
       M.notify("No ionide LSP clients available for notification: " .. method, vim.log.levels.WARN)
       return
@@ -568,16 +1100,179 @@ end
 
 function M.DotnetFile2Request(projectPath, currentVirtualPath, newFileVirtualPath)
   return {
-    projectPath,
-    currentVirtualPath,
-    newFileVirtualPath,
+    FsProj = projectPath,
+    FileVirtualPath = currentVirtualPath,
+    NewFile = newFileVirtualPath,
+  }
+end
+
+---Creates a DotnetFileRequest for fsproj single-file operations
+---@param projectPath string
+---@param fileVirtualPath string
+---@return DotnetFileRequest
+function M.DotnetFileRequest(projectPath, fileVirtualPath)
+  return {
+    FsProj = projectPath,
+    FileVirtualPath = fileVirtualPath,
+  }
+end
+
+---Creates a DotnetRenameFileRequest
+---@param projectPath string
+---@param oldFileVirtualPath string
+---@param newFileName string
+---@return DotnetRenameFileRequest
+function M.DotnetRenameFileRequest(projectPath, oldFileVirtualPath, newFileName)
+  return {
+    FsProj = projectPath,
+    OldFileVirtualPath = oldFileVirtualPath,
+    NewFileName = newFileName,
+  }
+end
+
+function M.DotnetProjectRequest(target, reference)
+  return {
+    Target = target,
+    Reference = reference,
+  }
+end
+
+function M.DotnetNewListRequest(query)
+  return {
+    Query = query,
+  }
+end
+
+function M.DotnetNewRunRequest(template, output, name)
+  return {
+    Template = template,
+    Output = output,
+    Name = name,
+  }
+end
+
+function M.FSharpPipelineHintRequest(filePath)
+  return {
+    TextDocument = M.TextDocumentIdentifier(filePath),
+  }
+end
+
+function M.OptionallyVersionedTextDocumentPositionParams(filePath, line, character, version)
+  return {
+    TextDocument = {
+      uri = M.TextDocumentIdentifier(filePath).uri,
+      version = version,
+    },
+    Position = M.Position(line, character),
+  }
+end
+
+function M.TestRunRequest(limitToProjects, testCaseFilter, attachDebugger)
+  return {
+    LimitToProjects = limitToProjects,
+    TestCaseFilter = testCaseFilter,
+    AttachDebugger = attachDebugger == true,
   }
 end
 
 function M.CallFSharpAddFileAbove(projectPath, currentVirtualPath, newFileVirtualPath, handler)
   return M.Call(
-    "fsharp/addFileAbove",
+    "fsproj/addFileAbove",
     M.DotnetFile2Request(projectPath, currentVirtualPath, newFileVirtualPath),
+    handler
+  )
+end
+
+---Adds a file below the specified file in the fsproj
+---@param projectPath string
+---@param currentVirtualPath string
+---@param newFileVirtualPath string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpAddFileBelow(projectPath, currentVirtualPath, newFileVirtualPath, handler)
+  return M.Call(
+    "fsproj/addFileBelow",
+    M.DotnetFile2Request(projectPath, currentVirtualPath, newFileVirtualPath),
+    handler
+  )
+end
+
+---Adds a new file to the fsproj
+---@param projectPath string
+---@param fileVirtualPath string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpAddFile(projectPath, fileVirtualPath, handler)
+  return M.Call(
+    "fsproj/addFile",
+    M.DotnetFileRequest(projectPath, fileVirtualPath),
+    handler
+  )
+end
+
+---Adds an existing file to the fsproj
+---@param projectPath string
+---@param fileVirtualPath string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpAddExistingFile(projectPath, fileVirtualPath, handler)
+  return M.Call(
+    "fsproj/addExistingFile",
+    M.DotnetFileRequest(projectPath, fileVirtualPath),
+    handler
+  )
+end
+
+---Removes a file from the fsproj
+---@param projectPath string
+---@param fileVirtualPath string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpRemoveFile(projectPath, fileVirtualPath, handler)
+  return M.Call(
+    "fsproj/removeFile",
+    M.DotnetFileRequest(projectPath, fileVirtualPath),
+    handler
+  )
+end
+
+---Moves a file up in the fsproj compile order
+---@param projectPath string
+---@param fileVirtualPath string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpMoveFileUp(projectPath, fileVirtualPath, handler)
+  return M.Call(
+    "fsproj/moveFileUp",
+    M.DotnetFileRequest(projectPath, fileVirtualPath),
+    handler
+  )
+end
+
+---Moves a file down in the fsproj compile order
+---@param projectPath string
+---@param fileVirtualPath string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpMoveFileDown(projectPath, fileVirtualPath, handler)
+  return M.Call(
+    "fsproj/moveFileDown",
+    M.DotnetFileRequest(projectPath, fileVirtualPath),
+    handler
+  )
+end
+
+---Renames a file in the fsproj
+---@param projectPath string
+---@param oldFileVirtualPath string
+---@param newFileName string
+---@param handler? fun(err: any, result: any, ctx: any, config: any)
+function M.CallFSharpRenameFile(projectPath, oldFileVirtualPath, newFileName, handler)
+  return M.Call(
+    "fsproj/renameFile",
+    M.DotnetRenameFileRequest(projectPath, oldFileVirtualPath, newFileName),
+    handler
+  )
+end
+
+function M.CallFSharpDocumentationGenerator(filePath, line, character, handler)
+  return M.Call(
+    "fsharp/documentationGenerator",
+    M.OptionallyVersionedTextDocumentPositionParams(filePath, line, character),
     handler
   )
 end
@@ -619,16 +1314,6 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpWorkspacePeek(directoryPath, depth, excludedDirs, handler)
-  ---@type vim.lsp.get_clients.Filter
-  local lspFilter = {
-    name = "ionide",
-  }
-
-  ---@type vim.lsp.Client
-  local i = vim.lsp.get_clients(lspFilter)
-  -- vim.notify("Lsp peek client " .. vim.inspect(i))
-  -- i.
-
   return M.Call("fsharp/workspacePeek", M.CreateFSharpWorkspacePeekRequest(directoryPath, depth, excludedDirs), handler)
 end
 
@@ -639,7 +1324,7 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpWorkspaceLoad(projectFiles, handler)
-  vim.notify("Loading workspace " .. vim.inspect(projectFiles))
+  M.notify("Loading workspace " .. vim.inspect(projectFiles), vim.log.levels.DEBUG)
   return M.Call("fsharp/workspaceLoad", M.CreateFSharpWorkspaceLoadParams(projectFiles), handler)
 end
 
@@ -650,17 +1335,16 @@ end
 ---  - Function which can be used to cancel all the requests. You could instead
 ---    iterate all clients and call their `cancel_request()` methods.
 function M.CallFSharpProject(projectPath, handler)
-  vim.notify("Loading project " .. vim.inspect(projectPath))
+  M.notify("Loading project " .. vim.inspect(projectPath), vim.log.levels.DEBUG)
   local p = M.CreateFSharpProjectParams(projectPath)
   return M.Call("fsharp/project", p, handler)
 end
 
----@return table<integer, integer>, fun() 2-tuple:
----  - Map of client-id:request-id pairs for all successful requests.
----  - Function which can be used to cancel all the requests. You could instead
----    iterate all clients and call their `cancel_request()` methods.
+---@deprecated FSAC docs indicate the FSDN service is no longer available.
+---@return table<integer, integer>, fun()
 function M.Fsdn(signature, handler)
-  return M.Call("fsharp/fsdn", M.FsdnRequest(signature), handler)
+  M.notify("fsharp/fsdn is no longer available — the FSDN service is offline", vim.log.levels.WARN)
+  return {}, function() end
 end
 
 ---@return table<integer, integer>, fun() 2-tuple:
@@ -697,6 +1381,42 @@ function M.CallFSharpDocumentationSymbol(xmlSig, assembly, handler)
   return M.Call("fsharp/documentationSymbol", M.DocumentationForSymbolRequest(xmlSig, assembly), handler)
 end
 
+function M.CallFSharpPipelineHint(filePath, handler)
+  return M.Call("fsharp/pipelineHint", M.FSharpPipelineHintRequest(filePath), handler)
+end
+
+function M.CallFSharpDotnetNewList(query, handler)
+  return M.Call("fsharp/dotnetnewlist", M.DotnetNewListRequest(query), handler)
+end
+
+function M.CallFSharpDotnetNewRun(template, output, name, handler)
+  return M.Call("fsharp/dotnetnewrun", M.DotnetNewRunRequest(template, output, name), handler)
+end
+
+function M.CallFSharpDotnetAddProject(target, reference, handler)
+  return M.Call("fsharp/dotnetaddproject", M.DotnetProjectRequest(target, reference), handler)
+end
+
+function M.CallFSharpDotnetRemoveProject(target, reference, handler)
+  return M.Call("fsharp/dotnetremoveproject", M.DotnetProjectRequest(target, reference), handler)
+end
+
+function M.CallFSharpDotnetSlnAdd(target, reference, handler)
+  return M.Call("fsharp/dotnetaddsln", M.DotnetProjectRequest(target, reference), handler)
+end
+
+function M.CallFSharpLoadAnalyzers(payload, handler)
+  return M.Call("fsharp/loadAnalyzers", payload or {}, handler)
+end
+
+function M.CallTestDiscoverTests(handler)
+  return M.Call("test/discoverTests", {}, handler)
+end
+
+function M.CallTestRunTests(limitToProjects, testCaseFilter, attachDebugger, handler)
+  return M.Call("test/runTests", M.TestRunRequest(limitToProjects, testCaseFilter, attachDebugger), handler)
+end
+
 ---Loads the given projects list.
 ---@param projects string[] -- projects only
 function M.LoadProjects(projects)
@@ -709,35 +1429,237 @@ function M.LoadProjects(projects)
   end
 end
 
-function M.ShowLoadedProjects()
-  M.notify("Loaded Projects:")
-  for proj, projInfo in pairs(M.Projects) do
-    M.notify("- " .. vim.fs.normalize(vim.inspect(projInfo)))
+---Reloads all loaded projects by requesting workspace load again.
+function M.ReloadProjects()
+  local clients = M.GetIonideClients()
+  if #clients == 0 then
+    M.notify("No ionide LSP clients available for reload", vim.log.levels.WARN)
+    return
+  end
+  for _, client in ipairs(clients) do
+    local root = client.config.root_dir
+    if root then
+      M.notify("Reloading workspace at " .. root)
+      M.CallFSharpWorkspacePeek(root, M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4, M.MergedConfig.settings.FSharp.excludeProjectDirectories or {})
+    end
   end
 end
 
-function M.ReloadProjects()
-  M.notify("Reloading Projects")
-  local foldersCount = #M.projectFolders
-  if foldersCount > 0 then
-    M.CallFSharpWorkspaceLoad(M.projectFolders)
+local function supports_method(client, method, capability_key)
+  if client == nil then
+    return false
+  end
+  if client.supports_method and client:supports_method(method) then
+    return true
+  end
+  if client.server_capabilities and capability_key then
+    if client.server_capabilities[capability_key] ~= nil then
+      return true
+    end
+    local lower = capability_key:sub(1, 1):lower() .. capability_key:sub(2)
+    if client.server_capabilities[lower] ~= nil then
+      return true
+    end
+  end
+  return false
+end
+
+---Interactively rename the current F# source file on disk and update its .fsproj entry.
+---Prompts for a new filename (pre-filled with the current name), renames the file on
+---disk, updates the .fsproj via FSAC's fsproj/renameFile endpoint, and switches the
+---current buffer to the new path.
+---
+---This is wired to <leader>cR in F# buffers to override the generic Snacks file-rename
+---which calls workspace/willRenameFiles — a FSAC stub that does nothing.
+function M.IonideRenameFileInteractive()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local old_full_path = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
+  if old_full_path == "" then
+    vim.notify("Ionide: buffer has no file path", vim.log.levels.WARN)
+    return
+  end
+
+  local ext = old_full_path:match("%.([^./\\]+)$")
+  if ext ~= "fs" and ext ~= "fsi" then
+    vim.notify("Ionide: not an F# source file (" .. (ext or "no ext") .. ")", vim.log.levels.WARN)
+    return
+  end
+
+  -- Find the nearest .fsproj directory
+  local fsproj_dir = util.root_pattern("*.fsproj")(old_full_path)
+  if not fsproj_dir then
+    vim.notify("Ionide: could not find a .fsproj above " .. old_full_path, vim.log.levels.WARN)
+    return
+  end
+  fsproj_dir = vim.fs.normalize(fsproj_dir)
+
+  -- Glob for .fsproj files in that directory
+  local fsproj_files = vim.fn.glob(fsproj_dir .. "/*.fsproj", false, true)
+  if not fsproj_files or #fsproj_files == 0 then
+    vim.notify("Ionide: no .fsproj found in " .. fsproj_dir, vim.log.levels.WARN)
+    return
+  end
+  -- Use the first fsproj if there are multiple (edge case — single fsproj dirs are normal)
+  local fsproj_path = vim.fs.normalize(fsproj_files[1])
+
+  -- Virtual path = path of the file relative to the fsproj directory
+  -- e.g. fsproj_dir = "/repo/MyProject", old_full_path = "/repo/MyProject/src/Game.fs"
+  -- → virtual_path = "src/Game.fs"
+  local virtual_path = old_full_path:sub(#fsproj_dir + 2) -- +2 to skip trailing separator
+
+  local old_filename = vim.fn.fnamemodify(old_full_path, ":t")
+  local old_dir = vim.fn.fnamemodify(old_full_path, ":h")
+
+  vim.ui.input(
+    { prompt = "Rename F# file to: ", default = old_filename },
+    function(new_name)
+      if not new_name or new_name == "" or new_name == old_filename then
+        return
+      end
+
+      local new_ext = new_name:match("%.([^./\\]+)$")
+      if new_ext ~= "fs" and new_ext ~= "fsi" then
+        vim.notify("Ionide: new name must have .fs or .fsi extension", vim.log.levels.WARN)
+        return
+      end
+
+      local new_full_path = old_dir .. "/" .. new_name
+
+      -- Step 1: rename on disk
+      local ok, err = vim.uv.fs_rename(old_full_path, new_full_path)
+      if not ok then
+        vim.notify("Ionide: disk rename failed: " .. (err or "unknown error"), vim.log.levels.ERROR)
+        return
+      end
+
+      -- Step 2: update the .fsproj via FSAC
+      M.CallFSharpRenameFile(fsproj_path, virtual_path, new_name, function(rename_err, _)
+        if rename_err then
+          vim.notify("Ionide: fsproj rename failed: " .. vim.inspect(rename_err), vim.log.levels.WARN)
+          -- Disk rename already happened — warn but don't try to undo it.
+        end
+      end)
+
+      -- Step 3: point the buffer at the new path and reload
+      -- schedule so LSP detach/reattach cycle doesn't race with the rename
+      vim.schedule(function()
+        vim.api.nvim_buf_set_name(bufnr, new_full_path)
+        vim.cmd("edit")
+        M.notify("Renamed " .. old_filename .. " → " .. new_name, vim.log.levels.INFO)
+      end)
+    end
+  )
+end
+
+function M.OnLspAttach(client, bufnr)
+  local settings = (M.MergedConfig and M.MergedConfig.IonideNvimSettings) or M.DefaultNvimSettings
+
+  if settings.UseIonideDocumentationHover == true then
+    vim.keymap.set("n", "K", function()
+      M.ShowDocumentationHover()
+    end, { buffer = bufnr, desc = "Ionide - Show formatted F# documentation" })
+  end
+
+  if settings.AutomaticCodeLensRefresh == true and supports_method(client, "textDocument/codeLens", "CodeLensProvider") then
+    vim.lsp.codelens.refresh({ bufnr = bufnr })
+    create_buf_autocmd({ "BufEnter", "InsertLeave", "BufWritePost" }, "IonideCodeLens", bufnr, function()
+      vim.lsp.codelens.refresh({ bufnr = bufnr })
+    end)
+  end
+
+  if supports_method(client, "textDocument/documentHighlight", "DocumentHighlightProvider") then
+    create_buf_autocmd({ "CursorHold", "CursorHoldI" }, "IonideDocumentHighlightHold", bufnr, function()
+      vim.lsp.buf.document_highlight()
+    end)
+    create_buf_autocmd({ "CursorMoved", "CursorMovedI" }, "IonideDocumentHighlightMove", bufnr, function()
+      vim.lsp.buf.clear_references()
+    end)
+  end
+
+  if settings.ShowSignatureOnCursorMove == true and supports_method(client, "textDocument/signatureHelp", "SignatureHelpProvider") then
+    create_buf_autocmd({ "CursorMovedI" }, "IonideSignatureHelp", bufnr, function()
+      vim.lsp.buf.signature_help()
+    end)
+  end
+
+  -- Buffer-local keymaps for F#-specific LSP actions.
+  -- Only registered when AddFSharpKeymaps is not explicitly false, giving users
+  -- a clean opt-out if they prefer their own bindings.
+  if settings.AddFSharpKeymaps ~= false then
+    -- Symbol rename — available workspace-wide via FSAC's renameProvider
+    if supports_method(client, "textDocument/rename", "RenameProvider") then
+      vim.keymap.set("n", "<leader>cr", vim.lsp.buf.rename, {
+        buffer = bufnr,
+        desc = "Rename F# symbol (workspace-wide)",
+      })
+    end
+
+    -- Code actions — exposes all 40+ FSAC code fixes (implement interface,
+    -- generate union cases, add explicit type annotation, remove unused opens, …)
+    -- Works in both normal and visual mode; visual mode passes the selection range.
+    if supports_method(client, "textDocument/codeAction", "CodeActionProvider") then
+      vim.keymap.set({ "n", "v" }, "<leader>ca", vim.lsp.buf.code_action, {
+        buffer = bufnr,
+        desc = "F# code actions (fixes & refactors)",
+      })
+    end
+
+    -- File rename — renames the .fs file on disk AND updates the .fsproj entry.
+    -- Overrides the generic Snacks file-rename which calls workspace/willRenameFiles
+    -- (a FSAC stub that does nothing).
+    vim.keymap.set("n", "<leader>cR", function()
+      M.IonideRenameFileInteractive()
+    end, {
+      buffer = bufnr,
+      desc = "Rename F# file (updates .fsproj)",
+    })
+  end
+end
+
+function M.OnNativeLspAttach(args)
+  local bufnr = args.buf or vim.api.nvim_get_current_buf()
+  -- Only act when an Ionide/fsautocomplete client is the one attaching.
+  -- If a non-Ionide client (e.g. copilot, lua_ls) fires LspAttach on this
+  -- buffer, ignore it — we don't want to re-run workspace init for every
+  -- client that happens to attach.
+  local attaching_client = args.data and args.data.client_id and vim.lsp.get_client_by_id(args.data.client_id)
+  local clients
+  if attaching_client then
+    -- A specific client triggered this event: only proceed if it's Ionide.
+    if not M.IsIonideClient(attaching_client) then return end
+    clients = { attaching_client }
   else
-    M.notify("Workspace is empty")
+    -- No client_id in args (legacy/manual call): fall back to all Ionide clients.
+    clients = M.GetIonideClients({ bufnr = bufnr })
+  end
+  for _, client in ipairs(clients) do
+    M.OnLspAttach(client, bufnr)
+    if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.AutomaticWorkspaceInit ~= false then
+      local root = client.config and client.config.root_dir or M.GetRoot(vim.api.nvim_buf_get_name(bufnr))
+      if root then
+        -- Send workspacePeek directly on the known client+bufnr to avoid
+        -- M.Call re-querying nvim_get_current_buf(), which is wrong at LspAttach
+        -- time and causes "fsharp/workspacePeek is not supported" warnings.
+        local params = M.CreateFSharpWorkspacePeekRequest(
+          root,
+          M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4,
+          M.MergedConfig.settings.FSharp.excludeProjectDirectories or {}
+        )
+        pcall(function()
+          client:request("fsharp/workspacePeek", params, nil, bufnr)
+        end)
+      end
+    end
   end
 end
 
 function M.OnFSProjSave()
   if
     vim.bo.ft == "fsharp_project"
-    and M.MergedConfig.IonideNvimSettings.AutomaticReloadWorkspace
+    and M.MergedConfig.IonideNvimSettings
     and M.MergedConfig.IonideNvimSettings.AutomaticReloadWorkspace == true
   then
     M.notify("fsharp project saved, reloading...")
-    local parentDir = vim.fs.normalize(vim.fs.dirname(vim.api.nvim_buf_get_name(vim.api.nvim_get_current_buf())))
-
-    if not vim.tbl_contains(M.projectFolders, parentDir) then
-      table.insert(M.projectFolders, parentDir)
-    end
     M.ReloadProjects()
   end
 end
@@ -766,16 +1688,17 @@ function M.RegisterAutocmds()
       local parentDir = vim.fs.normalize(vim.fs.dirname(bufname))
       local closestFsFile = vim.fs.find(function(name, path)
         return name:match(".*%.fs$")
-      end, { limit = 1, type = "file", upward = true, path = parentDir, stop = projectRoot })[1] or (function()
-        local newFile = parentDir .. "/" .. vim.inspect(os.time()) .. "TempFileForProjectInitDeleteMe.fs"
-        vim.fn.writefile({}, newFile)
-        return newFile
-      end)()
+      end, { limit = 1, type = "file", upward = true, path = parentDir, stop = projectRoot })[1]
+
+      -- If no .fs file exists nearby, FSAC will still attach via fsharp_project filetype — no need to create a temp file.
+      if not closestFsFile then
+        return
+      end
 
       -- M.notify("closest fs file is  " .. closestFsFile )
       ---@type integer
       local closestFileBufNumber = vim.fn.bufadd(closestFsFile)
-      local ionideClientsList = vim.lsp.get_clients({ name = "ionide" })
+       local ionideClientsList = M.GetIonideClients()
       local isAleadyStarted = false
       if ionideClientsList then
         for _, client in ipairs(ionideClientsList) do
@@ -796,6 +1719,14 @@ function M.RegisterAutocmds()
           vim.cmd.bd(closestFileBufNumber)
         end, 100)
       end
+      end,
+  })
+
+  vim.api.nvim_create_autocmd(M.MergedConfig.IonideNvimSettings.AutocmdEvents or { "LspAttach" }, {
+    desc = "Ionide attach-time LSP integrations",
+    group = vim.api.nvim_create_augroup("IonideNativeLspAttach", { clear = true }),
+    callback = function(args)
+      M.OnNativeLspAttach(args)
     end,
   })
 end
@@ -850,6 +1781,15 @@ vim.filetype.add({
           vim.bo[bufnr].comments = [[s0:*\ -,m0:*\ \ ,ex0:*),s1:(*,mb:*,ex:*),:\/\/\/,:\/\/]]
         end
     end,
+    fsi = function(path, bufnr)
+      return "fsharp",
+        function(bufnr)
+          vim.w.fdm = "syntax"
+          vim.bo[bufnr].formatoptions = "croql"
+          vim.bo[bufnr].commentstring = "//%s"
+          vim.bo[bufnr].comments = [[s0:*\ -,m0:*\ \ ,ex0:*),s1:(*,mb:*,ex:*),:\/\/\/,:\/\/]]
+        end
+    end,
   },
 })
 
@@ -857,29 +1797,25 @@ function M.InitializeDefaultFsiKeymapSettings()
   if not M.MergedConfig.IonideNvimSettings.FsiKeymap then
     M.MergedConfig.IonideNvimSettings.FsiKeymap = "vscode"
   end
-  if vim.fn.has("nvim") then
-    if M.MergedConfig.IonideNvimSettings.FsiKeymap == "vscode" then
-      M.MergedConfig.IonideNvimSettings.FsiKeymapSend = "<M-cr>"
-      M.MergedConfig.IonideNvimSettings.FsiKeymapToggle = "<M-@>"
-    elseif M.MergedConfig.IonideNvimSettings.FsiKeymap == "vim-fsharp" then
-      M.MergedConfig.IonideNvimSettings.FsiKeymapSend = "<leader>i"
-      M.MergedConfig.IonideNvimSettings.FsiKeymapToggle = "<leader>e"
-    elseif M.MergedConfig.IonideNvimSettings.FsiKeymap == "custom" then
-      M.MergedConfig.IonideNvimSettings.FsiKeymap = "none"
-      if not M.MergedConfig.IonideNvimSettings.FsiKeymapSend then
-        vim.cmd.echoerr("FsiKeymapSend not set. good luck with that I dont have a nice way to change it yet. sorry. ")
-      elseif not M.MergedConfig.IonideNvimSettings.FsiKeymapToggle then
-        vim.cmd.echoerr("FsiKeymapToggle not set. good luck with that I dont have a nice way to change it yet. sorry. ")
-      else
-        M.MergedConfig.IonideNvimSettings.FsiKeymap = "custom"
-      end
+  if M.MergedConfig.IonideNvimSettings.FsiKeymap == "vscode" then
+    M.MergedConfig.IonideNvimSettings.FsiKeymapSend = "<M-cr>"
+    M.MergedConfig.IonideNvimSettings.FsiKeymapToggle = "<M-@>"
+  elseif M.MergedConfig.IonideNvimSettings.FsiKeymap == "vim-fsharp" then
+    M.MergedConfig.IonideNvimSettings.FsiKeymapSend = "<leader>i"
+    M.MergedConfig.IonideNvimSettings.FsiKeymapToggle = "<leader>e"
+  elseif M.MergedConfig.IonideNvimSettings.FsiKeymap == "custom" then
+    M.MergedConfig.IonideNvimSettings.FsiKeymap = "none"
+    if not M.MergedConfig.IonideNvimSettings.FsiKeymapSend then
+      M.notify("FsiKeymapSend not set", vim.log.levels.WARN)
+    elseif not M.MergedConfig.IonideNvimSettings.FsiKeymapToggle then
+      M.notify("FsiKeymapToggle not set", vim.log.levels.WARN)
+    else
+      M.MergedConfig.IonideNvimSettings.FsiKeymap = "custom"
     end
-  else
-    M.notify("I'm sorry I don't support regular vim, try ionide/ionide-vim instead")
   end
 end
 
-FsiBuffer = -1
+local FsiBuffer = -1
 local fsiJob = -1
 local fsiWidth = 0
 local fsiHeight = 0
@@ -890,6 +1826,28 @@ vim.api.nvim_create_user_command("IonideResetIonideBufferNumber", function()
 end, {
   desc = "Resets the current buffer that fsi is assigned to back to the invalid number -1, so that Ionide knows to recreate it.",
 })
+
+---Restarts all Ionide LSP clients
+---@return boolean success
+function M.RestartLspClient()
+  local clients = M.GetIonideClients()
+  if #clients == 0 then
+    M.notify("No ionide LSP clients found to restart", vim.log.levels.WARN)
+    return false
+  end
+  for _, client in ipairs(clients) do
+    local bufs = vim.lsp.get_buffers_by_client_id(client.id)
+    client:stop()
+    vim.defer_fn(function()
+      for _, buf in ipairs(bufs) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          vim.lsp.start(M.MergedConfig, { bufnr = buf })
+        end
+      end
+    end, 500)
+  end
+  return true
+end
 
 vim.api.nvim_create_user_command("IonideRestartLspClient", function()
   local success = M.RestartLspClient()
@@ -906,13 +1864,7 @@ local function vimReturnFocus(window)
 end
 
 local function winGoToIdSafe(id)
-  if vim.fn.has("nvim") then
-    vim.fn.win_gotoid(id)
-  else
-    vim.fn.timer_start(1, function()
-      vimReturnFocus(id)
-    end, {})
-  end
+  vim.fn.win_gotoid(id)
 end
 
 local function getFsiCommand()
@@ -999,7 +1951,7 @@ function M.OpenFsi(returnFocus)
         winGoToIdSafe(currentWin)
       end
     else
-      fsiJob = vim.fn.termopen(cmd) or 0
+      fsiJob = vim.fn.jobstart(cmd, { term = true }) or 0
       if fsiJob > 0 then
         FsiBuffer = vim.fn.bufnr(vim.api.nvim_get_current_buf())
       else
@@ -1022,7 +1974,7 @@ function M.ToggleFsi()
   local w = vim.fn.bufwinid(FsiBuffer)
   if w > 0 then
     local curWin = vim.fn.win_getid()
-    M.winGoToId(w)
+    winGoToIdSafe(w)
     fsiWidth = vim.fn.winwidth(tonumber(vim.fn.expand("%")) or 0)
     fsiHeight = vim.fn.winheight(tonumber(vim.fn.expand("%")) or 0)
     vim.cmd.close()
@@ -1188,7 +2140,7 @@ function M.SendFsi(lines)
 end
 
 function M.GetCompleteBuffer()
-  return vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 1, -1, false)
+  return vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)
 end
 
 function M.SendSelectionToFsi()
@@ -1245,11 +2197,94 @@ vim.api.nvim_create_user_command(
 vim.api.nvim_create_user_command("IonideToggleFSI", M.ToggleFsi, { desc = "Ionide - Toggle FSharp Interactive" })
 vim.api.nvim_create_user_command("IonideQuitFSI", M.QuitFsi, { desc = "Ionide - Quit FSharp Interactive" })
 vim.api.nvim_create_user_command("IonideResetFSI", M.ResetFsi, { desc = "Ionide - Reset FSharp Interactive" })
+vim.api.nvim_create_user_command("IonideReloadProjects", function()
+  M.ReloadProjects()
+end, { desc = "Ionide - Reload workspace projects" })
+
+-- fsproj file operation commands
+register_fsproj_command(
+  "IonideFsprojMoveFileUp",
+  "IonideFsprojMoveFileUp <fsproj> <fileVirtualPath>",
+  "Ionide - Move file up in fsproj compile order",
+  2,
+  function(args) M.CallFSharpMoveFileUp(args[1], args[2]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojMoveFileDown",
+  "IonideFsprojMoveFileDown <fsproj> <fileVirtualPath>",
+  "Ionide - Move file down in fsproj compile order",
+  2,
+  function(args) M.CallFSharpMoveFileDown(args[1], args[2]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojAddFile",
+  "IonideFsprojAddFile <fsproj> <fileVirtualPath>",
+  "Ionide - Add file to fsproj",
+  2,
+  function(args) M.CallFSharpAddFile(args[1], args[2]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojAddExistingFile",
+  "IonideFsprojAddExistingFile <fsproj> <fileVirtualPath>",
+  "Ionide - Add existing file to fsproj",
+  2,
+  function(args) M.CallFSharpAddExistingFile(args[1], args[2]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojAddFileAbove",
+  "IonideFsprojAddFileAbove <fsproj> <currentFileVirtualPath> <newFileVirtualPath>",
+  "Ionide - Add file above another file in fsproj",
+  3,
+  function(args) M.CallFSharpAddFileAbove(args[1], args[2], args[3]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojAddFileBelow",
+  "IonideFsprojAddFileBelow <fsproj> <currentFileVirtualPath> <newFileVirtualPath>",
+  "Ionide - Add file below another file in fsproj",
+  3,
+  function(args) M.CallFSharpAddFileBelow(args[1], args[2], args[3]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojRemoveFile",
+  "IonideFsprojRemoveFile <fsproj> <fileVirtualPath>",
+  "Ionide - Remove file from fsproj",
+  2,
+  function(args) M.CallFSharpRemoveFile(args[1], args[2]) end
+)
+
+register_fsproj_command(
+  "IonideFsprojRenameFile",
+  "IonideFsprojRenameFile <fsproj> <oldFileVirtualPath> <newFileName>",
+  "Ionide - Rename file in fsproj",
+  3,
+  function(args) M.CallFSharpRenameFile(args[1], args[2], args[3]) end
+)
+
+vim.api.nvim_create_user_command("IonideTestDiscover", function()
+  M.CallTestDiscoverTests()
+end, { desc = "Ionide - Discover tests through FsAutoComplete" })
+
+vim.api.nvim_create_user_command("IonideTestRun", function(opts)
+  local testCaseFilter = opts.fargs[1]
+  M.CallTestRunTests(nil, testCaseFilter, false)
+end, { nargs = "?", desc = "Ionide - Run tests through FsAutoComplete" })
+
+vim.api.nvim_create_user_command("IonideDocumentation", function()
+  M.ShowDocumentationHover()
+end, { desc = "Ionide - Show formatted F# documentation hover" })
 
 function M.setup(config)
   M.PassedInConfig = config or {}
   -- M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultLspConfig, M.PassedInConfig)
+  M.MergedConfig.cmd = M.MergedConfig.IonideNvimSettings.FsautocompleteCommand
+  M.MergedConfig.handlers = vim.tbl_deep_extend("force", M.Handlers, M.MergedConfig.handlers or {})
   -- M.notify("Initializing")
 
   vim.validate({
@@ -1258,9 +2293,6 @@ function M.setup(config)
     filetypes = { M.MergedConfig.filetypes, "table", true },
     on_attach = { M.MergedConfig.on_attach, "function", true },
   })
-
-  M.SetKeymaps()
-  M.RegisterAutocmds()
 
   local bufnr = vim.api.nvim_get_current_buf()
   local bufname = vim.fs.normalize(vim.api.nvim_buf_get_name(bufnr))
@@ -1273,6 +2305,8 @@ function M.setup(config)
   end
 
   M.InitializeDefaultFsiKeymapSettings()
+  M.SetKeymaps()
+  M.RegisterAutocmds()
 
   return M.MergedConfig
 end
