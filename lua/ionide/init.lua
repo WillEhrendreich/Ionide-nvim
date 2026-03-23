@@ -1824,13 +1824,22 @@ function M.InitializeDefaultFsiKeymapSettings()
     M.MergedConfig.IonideNvimSettings.FsiKeymapSend = "<leader>i"
     M.MergedConfig.IonideNvimSettings.FsiKeymapToggle = "<leader>e"
   elseif M.MergedConfig.IonideNvimSettings.FsiKeymap == "custom" then
-    M.MergedConfig.IonideNvimSettings.FsiKeymap = "none"
-    if not M.MergedConfig.IonideNvimSettings.FsiKeymapSend then
+    -- Check both keymaps independently so both warnings fire if needed.
+    -- Previously used elseif which silently dropped FsiKeymapSend when only
+    -- FsiKeymapToggle was missing, and left FsiKeymap = "none" with no keymaps
+    -- registered at all.
+    local send_ok = M.MergedConfig.IonideNvimSettings.FsiKeymapSend ~= nil
+    local toggle_ok = M.MergedConfig.IonideNvimSettings.FsiKeymapToggle ~= nil
+    if not send_ok then
       M.notify("FsiKeymapSend not set", vim.log.levels.WARN)
-    elseif not M.MergedConfig.IonideNvimSettings.FsiKeymapToggle then
+    end
+    if not toggle_ok then
       M.notify("FsiKeymapToggle not set", vim.log.levels.WARN)
-    else
+    end
+    if send_ok and toggle_ok then
       M.MergedConfig.IonideNvimSettings.FsiKeymap = "custom"
+    else
+      M.MergedConfig.IonideNvimSettings.FsiKeymap = "none"
     end
   end
 end
@@ -2143,7 +2152,10 @@ function M.QuitFsi()
     if winid > 0 then
       vim.api.nvim_win_close(winid, true)
     end
-    vim.api.nvim_call_function("jobstop", { fsiJob })
+    -- Use vim.fn.jobstop (consistent with the rest of the codebase and testable
+    -- via the stub) rather than nvim_call_function("jobstop", ...) which bypasses
+    -- the stub and is inconsistent with IonideResetIonideBufferNumber above.
+    vim.fn.jobstop(fsiJob)
     FsiBuffer = -1
     fsiJob = -1
   end
@@ -2167,7 +2179,11 @@ function M.SendFsi(lines)
   end
 
   if openResult > 0 then
-    local toBeSent = vim.list_extend(lines, { "", ";;", "" })
+    -- Build the send buffer WITHOUT mutating the caller's `lines` table.
+    -- Previously `vim.list_extend(lines, {...})` extended `lines` in-place,
+    -- which would corrupt any table the caller reuses (e.g. SendAllToFsi
+    -- passing buffer lines directly).
+    local toBeSent = vim.list_extend(vim.list_extend({}, lines), { "", ";;", "" })
     -- M.notify("Text being sent to FSI:\n" .. vim.inspect(toBeSent))
     vim.fn.chansend(fsiJob, toBeSent)
   end

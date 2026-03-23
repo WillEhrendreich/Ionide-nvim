@@ -148,12 +148,27 @@ end
 vim.split = function(str, sep)
   local parts = {}
   if sep == "[-.]" then
+    -- Split on literal hyphen or dot (used by parse_semver)
     for part in str:gmatch("[^%-.]+") do
       table.insert(parts, part)
     end
   else
-    for part in str:gmatch("[^" .. sep .. "]+") do
-      table.insert(parts, part)
+    -- General split: escape the separator for use in a Lua pattern and
+    -- preserve empty strings (e.g. consecutive separators).
+    -- This matches real vim.split's default behaviour.
+    local escaped = sep:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+    local pattern = "([^" .. escaped .. "]*)" .. escaped .. "?"
+    local pos = 1
+    while pos <= #str + 1 do
+      local s, e, capture = str:find("(.-)" .. escaped, pos)
+      if s then
+        table.insert(parts, capture)
+        pos = e + 1
+      else
+        -- No more separators — append the remainder
+        table.insert(parts, str:sub(pos))
+        break
+      end
     end
   end
   return parts
