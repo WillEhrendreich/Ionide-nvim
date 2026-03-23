@@ -1716,9 +1716,7 @@ function M.RegisterAutocmds()
       end
 
       -- M.notify("closest fs file is  " .. closestFsFile )
-      ---@type integer
-      local closestFileBufNumber = vim.fn.bufadd(closestFsFile)
-       local ionideClientsList = M.GetIonideClients()
+      local ionideClientsList = M.GetIonideClients()
       local isAleadyStarted = false
       if ionideClientsList then
         for _, client in ipairs(ionideClientsList) do
@@ -1732,6 +1730,15 @@ function M.RegisterAutocmds()
       else
       end
       if not isAleadyStarted then
+        -- bufadd is called here (after the isAlreadyStarted check) to avoid permanently
+        -- adding a phantom buffer to Neovim's buffer list on the early-return path.
+        -- Previously, bufadd ran unconditionally before the check, leaking a buffer entry
+        -- every time OnNativeLspAttach fired for a project that FSAC already manages.
+        -- TODO(TOCTOU): a second OnNativeLspAttach for the same root can race past this
+        -- check before the deferred vim.cmd.e() fires and triggers an actual LSP attach.
+        -- A per-root pending-start flag (M._pendingRoots) would close this window.
+        ---@type integer
+        local closestFileBufNumber = vim.fn.bufadd(closestFsFile)
         vim.defer_fn(function()
           vim.cmd.tcd(projectRoot)
           vim.cmd.e(closestFsFile)
@@ -1773,10 +1780,10 @@ vim.filetype.add({
     fs = function(path, bufnr)
       return "fsharp",
         function(bufnr)
-          if not vim.g.filetype_fs then
-            vim.g["filetype_fs"] = "fsharp"
-          end
-          if not vim.g.filetype_fs == "fsharp" then
+          -- Only set the override global if it hasn't been set by the user already.
+          -- `not x == y` in Lua parses as `(not x) == y` (boolean == string, always false),
+          -- so we use a single nil-check guard instead of two redundant conditions.
+          if vim.g.filetype_fs == nil then
             vim.g["filetype_fs"] = "fsharp"
           end
           vim.w.fdm = "syntax"
@@ -1788,10 +1795,9 @@ vim.filetype.add({
     fsx = function(path, bufnr)
       return "fsharp",
         function(bufnr)
-          if not vim.g.filetype_fs then
-            vim.g["filetype_fsx"] = "fsharp"
-          end
-          if not vim.g.filetype_fs == "fsharp" then
+          -- Use filetype_fsx (not filetype_fs) consistently for .fsx files.
+          -- Same nil-check guard pattern as .fs handler above.
+          if vim.g.filetype_fsx == nil then
             vim.g["filetype_fsx"] = "fsharp"
           end
           vim.w.fdm = "syntax"
@@ -1905,9 +1911,13 @@ local function winGoToIdSafe(id)
 end
 
 local function getFsiCommand()
-  local cmd = "dotnet fsi"
+  -- The initial "dotnet fsi" default is overwritten by the config check below,
+  -- so we skip the dead first assignment and initialize directly from config.
+  local cmd
   if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.FsiCommand then
     cmd = M.MergedConfig.IonideNvimSettings.FsiCommand or "dotnet fsi"
+  else
+    cmd = "dotnet fsi"
   end
   local ep = {}
   if
@@ -1990,7 +2000,9 @@ function M.OpenFsi(returnFocus)
     else
       fsiJob = vim.fn.jobstart(cmd, { term = true }) or 0
       if fsiJob > 0 then
-        FsiBuffer = vim.fn.bufnr(vim.api.nvim_get_current_buf())
+        -- nvim_get_current_buf() already returns a buffer number.
+        -- Wrapping it in vim.fn.bufnr() is redundant (bufnr of a bufnr returns itself).
+        FsiBuffer = vim.api.nvim_get_current_buf()
       else
         vim.cmd.close()
         M.notify("failed to open FSI")
@@ -2012,8 +2024,12 @@ function M.ToggleFsi()
   if w > 0 then
     local curWin = vim.fn.win_getid()
     winGoToIdSafe(w)
-    fsiWidth = vim.fn.winwidth(tonumber(vim.fn.expand("%")) or 0)
-    fsiHeight = vim.fn.winheight(tonumber(vim.fn.expand("%")) or 0)
+    -- Use window id 0 (current window) explicitly.
+    -- expand("%") in a terminal buffer returns the job command string, not a window number,
+    -- so tonumber() of it is nil, which would silently fall through to 0 anyway — but
+    -- relying on that is accidental. Be explicit.
+    fsiWidth = vim.fn.winwidth(0)
+    fsiHeight = vim.fn.winheight(0)
     vim.cmd.close()
     vim.fn.win_gotoid(curWin)
   else

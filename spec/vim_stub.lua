@@ -47,6 +47,19 @@ function vim.__test.reset()
   vim.__test.buf_keymaps = {}
   vim.__test.fs_renames = {}   -- records {old, new} pairs from uv.fs_rename calls
   vim.__test.fs_rename_should_fail = false
+  -- winwidth_calls / winheight_calls: record the argument passed to winwidth/winheight.
+  -- Tests use this to assert we're passing 0 (current window) not a derived value.
+  vim.__test.winwidth_calls = {}
+  vim.__test.winheight_calls = {}
+  -- bufnr_calls: record every argument passed to vim.fn.bufnr().
+  -- The old code called bufnr(nvim_get_current_buf()) — bufnr of an int — which is redundant.
+  vim.__test.bufnr_calls = {}
+  -- bufadd_calls: record every argument passed to vim.fn.bufadd().
+  vim.__test.bufadd_calls = {}
+  -- g_globals: track vim.g writes for filetype guard tests.
+  vim.__test.g_writes = {}
+  -- Reset the backing g store if reset_g is already defined (not during initial bootstrap).
+  if vim.__test.reset_g then vim.__test.reset_g() end
 end
 
 function vim.__test.run_autocmd(event, opts)
@@ -211,7 +224,10 @@ vim.fn = {
   executable = function() return 1 end,
   glob = function() return {} end,
   join = function(list, sep) return table.concat(list, sep) end,
-  bufadd = function() return 2 end,
+  bufadd = function(path)
+    table.insert(vim.__test.bufadd_calls, path)
+    return 2
+  end,
   bufexists = function() return 1 end,
   bufwinid = function() return -1 end,
   win_getid = function() return 1 end,
@@ -220,8 +236,20 @@ vim.fn = {
   visualmode = function() return "v" end,
   line = function() return 1 end,
   expand = function() return "1" end,
-  winwidth = function() return 80 end,
-  winheight = function() return 20 end,
+  winwidth = function(arg)
+    table.insert(vim.__test.winwidth_calls, arg)
+    return 80
+  end,
+  winheight = function(arg)
+    table.insert(vim.__test.winheight_calls, arg)
+    return 20
+  end,
+  bufnr = function(arg)
+    table.insert(vim.__test.bufnr_calls, arg)
+    -- If given an integer (bufnr of a bufnr), return it unchanged — same as Neovim.
+    if type(arg) == "number" then return arg end
+    return vim.__test.current_buf
+  end,
   jobstart = function() return 1 end,
   jobstop = function(job_id)
     -- Record that jobstop was called; tests can inspect vim.__test.jobstops
@@ -301,7 +329,26 @@ vim.fs = {
 vim.o = { shellslash = false }
 vim.bo = setmetatable({}, { __index = function() return {} end })
 vim.b = setmetatable({}, { __index = function() return {} end })
-vim.g = { selection = "inclusive" }
+-- vim.g: a tracked table that records every key written via __newindex.
+-- Tests can read vim.__test.g_writes to assert which globals were set.
+-- We use a backing store so reads still work correctly.
+local _g_store = { selection = "inclusive" }
+vim.g = setmetatable({}, {
+  __index = function(_, k) return _g_store[k] end,
+  __newindex = function(_, k, v)
+    _g_store[k] = v
+    table.insert(vim.__test.g_writes, { key = k, value = v })
+  end,
+})
+-- Allow tests to reset the g store between cases
+function vim.__test.reset_g(initial)
+  for k in pairs(_g_store) do _g_store[k] = nil end
+  _g_store.selection = "inclusive"
+  if initial then
+    for k, v in pairs(initial) do _g_store[k] = v end
+  end
+  vim.__test.g_writes = {}
+end
 vim.w = setmetatable({}, { __index = function() return {} end })
 
 vim.api = {
