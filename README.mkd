@@ -544,7 +544,8 @@ When enabled, Ionide sets a buffer-local `K` mapping on F#/FSAC attach that:
 - starts with `fsharp/documentation`
 - enriches with `fsharp/documentationSymbol` when FSAC exposes a documentation target
 - includes diagnostics for the current line
-- falls back to normal `vim.lsp.buf.hover()` when needed
+- falls back to normal `vim.lsp.buf.hover()` when the combined docs come up empty
+- silently ignores `fsharp/documentation` method-not-found errors (e.g. older FSAC versions that don't support the endpoint)
 
 This is useful because the default hover often shows the same style of payload the VS Code integration uses,
 including a "go look over there" style documentation link. The Ionide documentation hover instead tries to fetch
@@ -552,13 +553,18 @@ the richer documentation payload directly and display it in Neovim.
 
 The effective resolution order is:
 
-1. `fsharp/documentation`
+1. `fsharp/documentation` (errors are silently ignored)
 2. standard `textDocument/hover` only to discover the documentation target metadata
 3. `fsharp/documentationSymbol` when that metadata is available
 4. append diagnostics for the current line
-5. fallback to `vim.lsp.buf.hover()`
+5. fallback to `vim.lsp.buf.hover()` if combined docs are empty
 
 So the goal is not merely "show hover", but "show the actual useful docs first, then include the local diagnostic context."
+
+**Hover interaction:**
+
+- **First `K`**: The hover float appears, but your cursor stays in the source buffer. Moving your cursor closes the hover automatically.
+- **Second `K`** (while hover is still visible): Jumps into the hover float so you can scroll and explore the content. The auto-close is removed so the float stays open. Press `q` to close it when done.
 
 ~~~lua
 ionide={

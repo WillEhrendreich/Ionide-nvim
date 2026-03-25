@@ -866,6 +866,20 @@ function M.ShowDocumentationHover(opts)
     vim.lsp.buf.hover(config)
     return
   end
+
+  -- Second press of K: if the hover float is already visible, jump into it
+  -- and remove the CursorMoved close events so it stays open for exploration.
+  local existing_float = vim.b[bufnr].lsp_floating_preview
+  if existing_float and vim.api.nvim_win_is_valid(existing_float) then
+    vim.api.nvim_set_current_win(existing_float)
+    local float_bufnr = vim.api.nvim_win_get_buf(existing_float)
+    -- Clear the autocmd group that would close the float on CursorMoved,
+    -- so the user can freely explore the hover content.
+    pcall(vim.api.nvim_del_augroup_by_name, "nvim.preview_window_" .. existing_float)
+    -- Re-map q to close in the float buffer so they can still dismiss it easily.
+    vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = float_bufnr, silent = true, nowait = true })
+    return
+  end
   local filePath, line, character = current_position_params()
   local debug_hover = config.debug == true
   local function trace(...)
@@ -890,6 +904,7 @@ function M.ShowDocumentationHover(opts)
       vim.lsp.util.open_floating_preview(merged, "markdown", {
         border = config.border,
         focus_id = "ionide/fsharp/documentation",
+        focus = false,
       })
       return true
     end
@@ -951,9 +966,7 @@ function M.ShowDocumentationHover(opts)
   return M.CallFSharpDocumentation(filePath, line, character, function(err, result, ctx, lsp_config)
     trace("documentation", err and "error" or "ok", result and result.Content and "has-content" or "no-content")
     if err then
-      if config.silent ~= true then
-        M.notify(err.message or "Failed to fetch F# documentation", vim.log.levels.ERROR)
-      end
+      trace("documentation", "error-ignored", err.message or "unknown")
       return
     end
 
