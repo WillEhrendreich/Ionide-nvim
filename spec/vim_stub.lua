@@ -27,6 +27,7 @@ function vim.__test.reset()
   vim.__test.codelens_refreshes = {}
   vim.__test.codelens_displays = {}
   vim.__test.lsp_buf_calls = {
+    code_action = {},
     document_highlight = 0,
     clear_references = 0,
     signature_help = 0,
@@ -480,6 +481,9 @@ vim.lsp = {
     end,
   },
   buf = {
+    code_action = function(opts)
+      table.insert(vim.__test.lsp_buf_calls.code_action, opts or {})
+    end,
     document_highlight = function()
       vim.__test.lsp_buf_calls.document_highlight = vim.__test.lsp_buf_calls.document_highlight + 1
     end,

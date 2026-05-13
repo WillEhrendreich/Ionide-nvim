@@ -426,6 +426,45 @@ function M.GetRoot(n)
   return root
 end
 
+--- Safely resolve an LSP client's root directory to a string.
+---
+--- LSP clients can have root_dir as either a string or a function
+--- (the function form is passed to vim.lsp.start and called internally).
+--- In some Neovim versions, client.config.root_dir retains the original
+--- function rather than the resolved string, causing vim.fs.normalize
+--- to error with "expected string, got function".
+---
+--- Resolution order:
+---  1. client.root_dir (Neovim 0.10+ resolved property — always a string)
+---  2. client.config.root_dir if it's a string
+---  3. M.GetRoot(fallback_bufname) if a fallback buffer is provided
+---  4. nil
+---
+---@param client vim.lsp.Client|nil
+---@param fallback_bufnr integer|nil
+---@return string|nil
+function M.ResolveClientRootDir(client, fallback_bufnr)
+  if not client then
+    return fallback_bufnr and M.GetRoot(vim.api.nvim_buf_get_name(fallback_bufnr)) or nil
+  end
+  -- Neovim 0.10+ stores the resolved string directly on client.root_dir
+  if type(client.root_dir) == "string" then
+    return client.root_dir
+  end
+  -- Fall back to config.root_dir (may still be a function in some versions)
+  if client.config then
+    local dir = client.config.root_dir
+    if type(dir) == "string" then
+      return dir
+    end
+  end
+  -- Last resort: detect root from a fallback buffer
+  if fallback_bufnr then
+    return M.GetRoot(vim.api.nvim_buf_get_name(fallback_bufnr))
+  end
+  return nil
+end
+
 ---@return table<string []>
 M.GetDefaultEnvVarsForRoot = function(root)
   local output, err = run_dotnet_version(root)
@@ -767,6 +806,16 @@ M.DefaultLspConfig = {
 M.PassedInConfig = { settings = { FSharp = {} } }
 
 M.Manager = nil
+
+M.ExtractFunctionCodeActionKind = "refactor.extract.function"
+
+function M.ExtractFunction()
+  vim.lsp.buf.code_action({
+    context = {
+      only = { M.ExtractFunctionCodeActionKind },
+    },
+  })
+end
 
 ---@param content any
 ---@returns PlainNotification
@@ -1476,7 +1525,7 @@ function M.ReloadProjects()
     return
   end
   for _, client in ipairs(clients) do
-    local root = client.config.root_dir
+    local root = M.ResolveClientRootDir(client)
     if root then
       M.notify("Reloading workspace at " .. root)
       M.CallFSharpWorkspacePeek(root, M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4, M.MergedConfig.settings.FSharp.excludeProjectDirectories or {})
@@ -1675,6 +1724,15 @@ function M.OnLspAttach(client, bufnr)
           desc = "F# code actions (fixes & refactors)",
         })
       end
+
+      if no_buf_map("v", "<leader>ce") then
+        vim.keymap.set("v", "<leader>ce", function()
+          M.ExtractFunction()
+        end, {
+          buffer = bufnr,
+          desc = "Extract F# function",
+        })
+      end
     end
 
     -- File rename — renames the .fs file on disk AND updates the .fsproj entry.
@@ -1710,7 +1768,7 @@ function M.OnNativeLspAttach(args)
   for _, client in ipairs(clients) do
     M.OnLspAttach(client, bufnr)
     if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.AutomaticWorkspaceInit ~= false then
-      local root = client.config and client.config.root_dir or M.GetRoot(vim.api.nvim_buf_get_name(bufnr))
+      local root = M.ResolveClientRootDir(client, bufnr)
       if root then
         -- Send workspacePeek directly on the known client+bufnr to avoid
         -- M.Call re-querying nvim_get_current_buf(), which is wrong at LspAttach
@@ -1775,7 +1833,7 @@ function M.RegisterAutocmds()
       local isAleadyStarted = false
       if ionideClientsList then
         for _, client in ipairs(ionideClientsList) do
-          local root = client.config.root_dir or ""
+          local root = M.ResolveClientRootDir(client, bufnr) or ""
           if vim.fs.normalize(root) == projectRoot then
             -- M.notify("Ionide already started for root path of " .. projectRoot .. " \nClient Id: " .. vim.inspect(client.id))
             isAleadyStarted = true
@@ -2400,11 +2458,15 @@ vim.api.nvim_create_user_command("IonideDocumentation", function()
   M.ShowDocumentationHover()
 end, { desc = "Ionide - Show formatted F# documentation hover" })
 
+vim.api.nvim_create_user_command("IonideExtractFunction", function()
+  M.ExtractFunction()
+end, { desc = "Ionide - Extract F# function from selection" })
+
 function M.setup(config)
   M.PassedInConfig = config or {}
   -- M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultLspConfig, M.PassedInConfig)
-  M.MergedConfig.cmd = M.MergedConfig.IonideNvimSettings.FsautocompleteCommand
+  M.MergedConfig.cmd = fsautocomplete_command(M.MergedConfig.IonideNvimSettings.FsautocompleteCommand, M.MergedConfig.settings)
   M.MergedConfig.handlers = vim.tbl_deep_extend("force", M.Handlers, M.MergedConfig.handlers or {})
   -- M.notify("Initializing")
 

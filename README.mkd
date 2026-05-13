@@ -25,6 +25,7 @@ _An unofficial part of the [Ionide](http://ionide.io) plugin suite._
 - Curated FSAC settings defaults (60+ settings with documentation)
 - SDK version handling (`DOTNET_ROLL_FORWARD` for prerelease SDKs)
 - Auto completions, diagnostics, quick fixes
+- Dedicated Extract Function refactor command when FsAutoComplete exposes `refactor.extract.function`
 - Go to Definition, Find References, Rename, Symbol Search
 - Code lenses (signatures and references)
 - Inlay hints
@@ -105,6 +106,9 @@ Opening `*.fs`, `*.fsi`, `*.fsx`, or `*.fsproj` files triggers Ionide-Nvim.
 - `:IonideRestartLspClient` — Restart the LSP client
 - `:IonideReloadProjects` — Reload workspace projects
 - `:IonideDocumentation` — Show formatted F# documentation using FsAutoComplete's richer docs endpoint
+- `:IonideExtractFunction` — Request FsAutoComplete's Extract Function refactor for the current visual selection
+
+`IonideExtractFunction` filters Neovim code actions to `refactor.extract.function`. It requires an FsAutoComplete build that advertises that code-action kind; older FSAC builds simply return no matching action.
 
 #### F# Interactive
 - `:IonideSendCurrentLineToFSI` — Send current line to FSI
@@ -160,6 +164,14 @@ In a modern setup, responsibilities are usually split like this:
 - optional F#-specific extras that are not already owned by your global Neovim/LazyVim setup
 
 In other words: if Neovim or LazyVim already does something generically and well, Ionide should usually **not duplicate it**.
+
+Ionide keeps one dedicated F# refactoring wrapper because Extract Function needs a specific FSAC code-action kind:
+
+| Action | Default keymap | Command |
+|---|---|---|
+| Extract Function | visual `<leader>ce` | `:IonideExtractFunction` |
+
+Set `IonideNvimSettings.AddFSharpKeymaps = false` to disable the default visual keymap and keep only the command.
 
 Here are the defaults for Ionide-Nvim specific settings:
 ~~~lua

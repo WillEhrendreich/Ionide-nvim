@@ -226,6 +226,14 @@ describe("ionide.init", function()
   end)
 
   describe("LSP attach behavior", function()
+    it("Given ExtractFunction is invoked, then it requests only the FSAC extract-function refactor", function()
+      ionide.ExtractFunction()
+
+      local call = vim.__test.lsp_buf_calls.code_action[#vim.__test.lsp_buf_calls.code_action]
+      assert.is_not_nil(call)
+      assert.same({ "refactor.extract.function" }, call.context.only)
+    end)
+
     it("Given code lens is supported and auto refresh is enabled, when ionide attaches, then codelens refresh occurs and autocmds are registered", function()
       local client = make_client({
         id = 11,
@@ -316,6 +324,46 @@ describe("ionide.init", function()
       assert.equals(12, k_map.opts.buffer)
       assert.truthy(k_map.opts.desc:match("formatted F# documentation"))
     end)
+
+    it("Given code action is supported, when ionide attaches, then extract function gets a visual keymap", function()
+      local client = make_client({
+        id = 16,
+        server_capabilities = { CodeActionProvider = true },
+        __supported_methods = { ["textDocument/codeAction"] = true },
+      })
+
+      ionide.OnLspAttach(client, 13)
+
+      local extract_map = nil
+      for _, km in ipairs(vim.__test.keymaps) do
+        if km.lhs == "<leader>ce" and km.opts.buffer == 13 then
+          extract_map = km
+          break
+        end
+      end
+
+      assert.is_not_nil(extract_map, "expected a buffer-local Extract Function keymap")
+      assert.equals("v", extract_map.mode)
+      assert.equals(13, extract_map.opts.buffer)
+      assert.truthy(extract_map.opts.desc:match("Extract F# function"))
+    end)
+
+    it("Given F# keymaps are disabled, when ionide attaches, then extract function keymap is not registered", function()
+      local client = make_client({
+        id = 17,
+        server_capabilities = { CodeActionProvider = true },
+        __supported_methods = { ["textDocument/codeAction"] = true },
+      })
+      ionide.MergedConfig = vim.tbl_deep_extend("force", ionide.DefaultLspConfig, {
+        IonideNvimSettings = { AddFSharpKeymaps = false },
+      })
+
+      ionide.OnLspAttach(client, 14)
+
+      for _, km in ipairs(vim.__test.keymaps) do
+        assert.not_equals("<leader>ce", km.lhs)
+      end
+    end)
   end)
 
   describe("custom notifications", function()
@@ -402,6 +450,7 @@ describe("ionide.init", function()
       assert.is_table(vim.__test.user_commands.IonideTestDiscover)
       assert.is_table(vim.__test.user_commands.IonideTestRun)
       assert.is_table(vim.__test.user_commands.IonideDocumentation)
+      assert.is_table(vim.__test.user_commands.IonideExtractFunction)
     end)
 
     it("Given a custom FsautocompleteCommand, when setup is invoked, then the LSP cmd uses that command", function()
