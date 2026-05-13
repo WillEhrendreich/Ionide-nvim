@@ -100,6 +100,48 @@ local function register_fsproj_command(name, usage, desc, argc, callback)
   end, { nargs = "+", desc = desc })
 end
 
+local function list_contains(list, item)
+  for _, value in ipairs(list or {}) do
+    if value == item then
+      return true
+    end
+  end
+  return false
+end
+
+local function copy_list(list)
+  local result = {}
+  for index, value in ipairs(list or {}) do
+    result[index] = value
+  end
+  return result
+end
+
+local function transparent_compiler_enabled(settings)
+  local fcs = settings and settings.FSharp and settings.FSharp.fcs
+  if type(fcs) ~= "table" then
+    return false
+  end
+
+  local transparent_compiler = fcs.transparentCompiler
+  if type(transparent_compiler) == "table" then
+    return transparent_compiler.enabled == true
+  end
+
+  return transparent_compiler == true
+end
+
+local function fsautocomplete_command(base_command, settings)
+  local cmd = copy_list(base_command)
+  local transparent_compiler_flag = "--use-fcs-transparent-compiler"
+
+  if transparent_compiler_enabled(settings) and not list_contains(cmd, transparent_compiler_flag) then
+    table.insert(cmd, transparent_compiler_flag)
+  end
+
+  return cmd
+end
+
 local function split_lines(text)
   if not text or text == "" then
     return {}
@@ -548,7 +590,7 @@ M.DefaultServerSettings = {
   --   { AutomaticWorkspaceInit: bool option AutomaticWorkspaceInit = false
   --     WorkspaceModePeekDeepLevel: int option WorkspaceModePeekDeepLevel = 2
   workspaceModePeekDeepLevel = 4,
-  fcs = { transparentCompiler = { enabled = true } },
+  fcs = { transparentCompiler = { enabled = false } },
   fsac = {
     attachDebugger = false,
     -- cachedTypeCheckCount = 200,

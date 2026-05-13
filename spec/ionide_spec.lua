@@ -414,6 +414,54 @@ describe("ionide.init", function()
       assert.same({ "dotnet", "C:/custom/fsautocomplete.dll" }, cfg.cmd)
     end)
 
+    it("Given transparent compiler is enabled with VS Code-style nesting, when setup is invoked, then FSAC starts with the transparent compiler flag", function()
+      local cfg = ionide.setup({
+        settings = {
+          FSharp = {
+            fcs = {
+              transparentCompiler = {
+                enabled = true,
+              },
+            },
+          },
+        },
+      })
+
+      assert.same({ "fsautocomplete", "--use-fcs-transparent-compiler" }, cfg.cmd)
+    end)
+
+    it("Given transparent compiler is enabled with Lua shorthand, when setup is invoked, then FSAC starts with the transparent compiler flag", function()
+      local cfg = ionide.setup({
+        settings = {
+          FSharp = {
+            fcs = {
+              transparentCompiler = true,
+            },
+          },
+        },
+      })
+
+      assert.same({ "fsautocomplete", "--use-fcs-transparent-compiler" }, cfg.cmd)
+    end)
+
+    it("Given transparent compiler is left at the default, when setup is invoked, then FSAC starts without the experimental flag", function()
+      local cfg = ionide.setup({})
+
+      assert.same({ "fsautocomplete" }, cfg.cmd)
+    end)
+
+    it("Given unnecessary parentheses analyzer is disabled, when setup is invoked, then FSAC receives that setting as false", function()
+      local cfg = ionide.setup({
+        settings = {
+          FSharp = {
+            unnecessaryParenthesesAnalyzer = false,
+          },
+        },
+      })
+
+      assert.is_false(cfg.settings.FSharp.unnecessaryParenthesesAnalyzer)
+    end)
+
     it("Given AutomaticWorkspaceInit is enabled, when LspAttach fires, then workspace peek is requested", function()
       ionide.setup({})
       local client = make_client({ id = 22, name = "ionide", config = { root_dir = "/workspace" } })

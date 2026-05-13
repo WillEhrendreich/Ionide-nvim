@@ -337,6 +337,15 @@ ionide = {
   --     WorkspaceModePeekDeepLevel: int option WorkspaceModePeekDeepLevel = 2
   workspaceModePeekDeepLevel = 4,
 
+  -- VS Code equivalent: "FSharp.fcs.transparentCompiler.enabled".
+  -- FSAC consumes this as the startup flag --use-fcs-transparent-compiler,
+  -- so set it during setup and restart Neovim for changes to take effect.
+  fcs = {
+    transparentCompiler = {
+      enabled = false,
+    },
+  },
+
   fsac = {
     attachDebugger = false,
     cachedTypeCheckCount = 200,
@@ -393,6 +402,8 @@ ionide = {
   unusedDeclarationsAnalyzer = true,
   --     SimplifyNameAnalyzer: bool option false
   simplifyNameAnalyzer = true,
+  --     UnnecessaryParenthesesAnalyzer: bool option true
+  unnecessaryParenthesesAnalyzer = true,
   --     ResolveNamespaces: bool option false
   resolveNamespaces = true,
   --     EnableAnalyzers: bool option false
