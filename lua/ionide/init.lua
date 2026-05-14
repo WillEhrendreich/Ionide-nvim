@@ -1405,6 +1405,75 @@ function M.CallFSharpWorkspacePeek(directoryPath, depth, excludedDirs, handler)
   return M.Call("fsharp/workspacePeek", M.CreateFSharpWorkspacePeekRequest(directoryPath, depth, excludedDirs), handler)
 end
 
+--- Response handler for fsharp/workspacePeek: extracts project file paths from the
+--- workspace items and calls fsharp/workspaceLoad so FSAC actually loads the projects
+--- into its in-memory model. Without this, workspacePeek discovers projects but FSAC
+--- never loads them, producing "Couldn't find file in LoadedProjects" errors.
+---
+--- FSAC wraps request responses in PlainNotification: { content = "<json>" }.
+--- The JSON has `Data.Found` — an array of workspace items, each with:
+---   Type = "solution" → Data.Items[].Name  (project file paths)
+---   Type = "directory" → Data.Fsprojs[]    (project file paths)
+---
+---@param err any
+---@param result table|nil
+---@param ctx table|nil
+---@param config table|nil
+function M.handleWorkspacePeek(err, result, ctx, config)
+  if err then
+    M.notify("workspacePeek error: " .. vim.inspect(err), vim.log.levels.WARN)
+    return
+  end
+  if not result then return end
+
+  -- Decode the PlainNotification wrapper that FSAC uses for request responses.
+  -- FSAC returns { content = "<json>" } where the JSON is { Data = { Found = [...] } }.
+  -- The Found array contains the workspace items we need to extract project paths from.
+  local decoded = result
+  if type(result.content) == "string" and result.content ~= "" then
+    local ok, parsed = pcall(decode_json_payload, result.content)
+    if ok and parsed then
+      decoded = parsed
+    end
+  end
+
+  -- The actual workspace items are always under .Data.Found regardless of whether
+  -- the response came through PlainNotification or as direct JSON-RPC result.
+  -- (This matches FSAC's protocol — the VSCode extension's parse() receives res?Data)
+  local data = decoded and decoded.Data
+  if not data or type(data) ~= "table" then return end
+
+  local found = data.Found
+  if not found or type(found) ~= "table" or #found == 0 then return end
+
+  local projects = {}
+  for _, item in ipairs(found) do
+    local itemData = item.Data
+    if itemData and type(itemData) == "table" then
+      -- Solution type: Data.Items[].Name
+      if itemData.Items and type(itemData.Items) == "table" then
+        for _, proj in ipairs(itemData.Items) do
+          if type(proj) == "table" and type(proj.Name) == "string" and proj.Name:match("%.fsproj$") then
+            table.insert(projects, proj.Name)
+          end
+        end
+      end
+      -- Directory type: Data.Fsprojs[]
+      if itemData.Fsprojs and type(itemData.Fsprojs) == "table" then
+        for _, projPath in ipairs(itemData.Fsprojs) do
+          if type(projPath) == "string" then
+            table.insert(projects, projPath)
+          end
+        end
+      end
+    end
+  end
+
+  if #projects > 0 then
+    M.CallFSharpWorkspaceLoad(projects)
+  end
+end
+
 ---Call to "fsharp/workspaceLoad"
 ---@param projectFiles string[]  a string list of project files.
 ---@return table<integer, integer>, fun() 2-tuple:
@@ -1528,7 +1597,7 @@ function M.ReloadProjects()
     local root = M.ResolveClientRootDir(client)
     if root then
       M.notify("Reloading workspace at " .. root)
-      M.CallFSharpWorkspacePeek(root, M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4, M.MergedConfig.settings.FSharp.excludeProjectDirectories or {})
+      M.CallFSharpWorkspacePeek(root, M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4, M.MergedConfig.settings.FSharp.excludeProjectDirectories or {}, M.handleWorkspacePeek)
     end
   end
 end
@@ -1779,7 +1848,7 @@ function M.OnNativeLspAttach(args)
           M.MergedConfig.settings.FSharp.excludeProjectDirectories or {}
         )
         pcall(function()
-          client:request("fsharp/workspacePeek", params, nil, bufnr)
+          client:request("fsharp/workspacePeek", params, M.handleWorkspacePeek, bufnr)
         end)
       end
     end
