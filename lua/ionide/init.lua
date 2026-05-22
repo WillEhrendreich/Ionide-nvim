@@ -1957,15 +1957,7 @@ function M.RestartLspClient()
     return false
   end
   for _, client in ipairs(clients) do
-    local bufs = vim.lsp.get_buffers_by_client_id(client.id)
-    client:stop()
-    vim.defer_fn(function()
-      for _, buf in ipairs(bufs) do
-        if vim.api.nvim_buf_is_valid(buf) then
-          vim.lsp.start(M.MergedConfig, { bufnr = buf })
-        end
-      end
-    end, 500)
+    vim.lsp.stop_client(client, { restart = true })
   end
   return true
 end

@@ -532,6 +532,62 @@ describe("ionide bug regression suite", function()
   end)
 
   -- ===========================================================================
+  -- BUG 8: IonideRestartLspClient crash path
+  -- ===========================================================================
+  -- The old restart implementation manually stopped each client and then
+  -- re-started with vim.lsp.start(M.MergedConfig, { bufnr = ... }) on a defer.
+  -- In real sessions this could crash/re-enter in bad states.
+  -- The safer contract is to use Neovim's native restart path:
+  --   vim.lsp.stop_client(client, { restart = true })
+  -- and avoid manual re-start orchestration in plugin code.
+
+  describe("BUG 8 — IonideRestartLspClient uses native LSP restart without crashing", function()
+    it("Given ionide and non-ionide clients, when IonideRestartLspClient runs, then only ionide client is restarted via stop_client(restart=true) and command does not throw", function()
+      -- WHY: issue #8 reports command-triggered crashes after FSAC was already loaded.
+      -- We pin the integration path at the command surface, not just the helper.
+      local ionide_client = make_client({ id = 81, name = "ionide" })
+      local copilot_client = make_client({ id = 82, name = "copilot" })
+
+      vim.__test.clients = { ionide_client, copilot_client }
+      vim.__test.buffers_by_client_id[81] = { 1 }
+      vim.__test.buffers_by_client_id[82] = { 1 }
+
+      ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+
+      local stop_calls = {}
+      local original_stop_client = vim.lsp.stop_client
+      vim.lsp.stop_client = function(client, opts)
+        table.insert(stop_calls, { client = client, opts = opts })
+      end
+
+      local restart_cmd = vim.__test.user_commands["IonideRestartLspClient"]
+      assert.is_table(restart_cmd, "IonideRestartLspClient command must exist")
+
+      vim.__test.deferred = {}
+      vim.__test.notifications = {}
+      local ok, err = pcall(restart_cmd.callback, {})
+
+      vim.lsp.stop_client = original_stop_client
+
+      assert.is_true(ok, "IonideRestartLspClient must not crash: " .. tostring(err))
+      assert.equals(1, #stop_calls, "only the ionide client should be restarted")
+      assert.equals(81, stop_calls[1].client.id)
+      assert.is_table(stop_calls[1].opts)
+      assert.is_true(stop_calls[1].opts.restart, "restart=true should be passed to stop_client")
+      assert.equals(0, #vim.__test.deferred, "manual deferred restart orchestration should not be used")
+
+      local notified_success = false
+      for _, n in ipairs(vim.__test.notifications) do
+        if type(n.msg) == "string" and n.msg:match("restart initiated") then
+          notified_success = true
+          break
+        end
+      end
+      assert.is_true(notified_success, "successful restart should notify the user")
+    end)
+  end)
+
+  -- ===========================================================================
   -- BUG 4 (rename atomicity) + BUG 3 (virtual path +2 → +1)
   -- ===========================================================================
   -- IonideRenameFileInteractive had two related bugs:
