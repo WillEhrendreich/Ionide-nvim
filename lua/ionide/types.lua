@@ -96,19 +96,6 @@
 ---@class FSharpWorkspaceLoadParams
 ---@field TextDocuments lsp.TextDocumentIdentifier[]
 
---- for calling "fsharp/workspacePeek" - accepts WorkspacePeekRequest,
---- returns list of possible workspaces (resolved solution files,
---- or list of projects if there are no solution files)
---- original FSharp Type Definition:
---- type WorkspacePeekRequest =
----   { Directory: string
----     Deep: int
----     ExcludedDirs: string array }
----@class FSharpWorkspacePeekRequest
----@field Directory string
----@field Deep integer
----@field ExcludedDirs string[]
-
 -- type PlainNotification = { Content: string }
 ---@class PlainNotification
 ---@field Content string

@@ -105,13 +105,6 @@ describe("ionide.init", function()
       assert.equals(5, result.Character)
     end)
 
-    it("Given CreateFSharpWorkspacePeekRequest, when called, then it creates the expected shape", function()
-      local result = ionide.CreateFSharpWorkspacePeekRequest("/workspace", 4, { "node_modules" })
-      assert.equals("/workspace", result.Directory)
-      assert.equals(4, result.Deep)
-      assert.same({ "node_modules" }, result.ExcludedDirs)
-    end)
-
     it("Given CreateFSharpWorkspaceLoadParams, when called, then it creates TextDocuments", function()
       local result = ionide.CreateFSharpWorkspaceLoadParams({ "/path/a.fsproj", "/path/b.fsproj" })
       assert.equals(2, #result.TextDocuments)
@@ -211,18 +204,6 @@ describe("ionide.init", function()
       assert.is_false(req.params.AttachDebugger)
     end)
 
-    it("Given fsautocomplete and copilot are attached, when ionide sends a custom request, then only fsautocomplete receives it", function()
-      local fsac = make_client({ id = 30, name = "fsautocomplete" })
-      local copilot = vim.__test.with_client_methods(make_client({ id = 31, name = "copilot" }))
-      vim.__test.clients = { fsac, copilot }
-      vim.__test.buffers_by_client_id[30] = { 1 }
-      vim.__test.buffers_by_client_id[31] = { 1 }
-
-      ionide.CallFSharpWorkspacePeek("/workspace", 4, {})
-
-      assert.equals("fsharp/workspacePeek", vim.__test.client_requests[30][1].method)
-      assert.is_nil(vim.__test.client_requests[31])
-    end)
   end)
 
   describe("LSP attach behavior", function()
@@ -511,18 +492,6 @@ describe("ionide.init", function()
       assert.is_false(cfg.settings.FSharp.unnecessaryParenthesesAnalyzer)
     end)
 
-    it("Given AutomaticWorkspaceInit is enabled, when LspAttach fires, then workspace peek is requested", function()
-      ionide.setup({})
-      local client = make_client({ id = 22, name = "ionide", config = { root_dir = "/workspace" } })
-      vim.__test.clients = { client }
-      vim.__test.buffers_by_client_id[22] = { 1 }
-
-      vim.__test.run_autocmd("LspAttach", { buffer = 1 })
-
-      local req = vim.__test.client_requests[22][#vim.__test.client_requests[22]]
-      assert.is_not_nil(req)
-      assert.equals("fsharp/workspacePeek", req.method)
-    end)
   end)
 
   describe("legacy surfaces", function()

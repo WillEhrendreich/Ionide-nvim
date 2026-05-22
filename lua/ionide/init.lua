@@ -868,19 +868,6 @@ function M.CreateFSharpProjectParams(projectUri)
   }
 end
 
----Creates an FSharpWorkspacePeekRequest from a directory string path, the workspaceModePeekDeepLevel integer and excludedDirs list
----@param directory string
----@param deep integer
----@param excludedDirs string[]
----@return FSharpWorkspacePeekRequest
-function M.CreateFSharpWorkspacePeekRequest(directory, deep, excludedDirs)
-  return {
-    Directory = vim.fs.normalize(directory),
-    Deep = deep,
-    ExcludedDirs = excludedDirs,
-  }
-end
-
 ---creates an fsdn request
 ---NOTE: FSAC docs indicate this service is no longer available.
 ---@deprecated Use online F# documentation search instead.
@@ -1393,87 +1380,6 @@ function M.CallFSharpCompileOnProjectFile(projectPath, handler)
   return M.Call("fsharp/compile", M.CreateFSharpProjectParams(projectPath), handler)
 end
 
----Calls "fsharp/workspacePeek" Lsp Endpoint of FsAutoComplete
----@param directoryPath string
----@param depth integer
----@param excludedDirs string[]
----@return table<integer, integer>, fun() 2-tuple:
----  - Map of client-id:request-id pairs for all successful requests.
----  - Function which can be used to cancel all the requests. You could instead
----    iterate all clients and call their `cancel_request()` methods.
-function M.CallFSharpWorkspacePeek(directoryPath, depth, excludedDirs, handler)
-  return M.Call("fsharp/workspacePeek", M.CreateFSharpWorkspacePeekRequest(directoryPath, depth, excludedDirs), handler)
-end
-
---- Response handler for fsharp/workspacePeek: extracts project file paths from the
---- workspace items and calls fsharp/workspaceLoad so FSAC actually loads the projects
---- into its in-memory model. Without this, workspacePeek discovers projects but FSAC
---- never loads them, producing "Couldn't find file in LoadedProjects" errors.
----
---- FSAC wraps request responses in PlainNotification: { content = "<json>" }.
---- The JSON has `Data.Found` — an array of workspace items, each with:
----   Type = "solution" → Data.Items[].Name  (project file paths)
----   Type = "directory" → Data.Fsprojs[]    (project file paths)
----
----@param err any
----@param result table|nil
----@param ctx table|nil
----@param config table|nil
-function M.handleWorkspacePeek(err, result, ctx, config)
-  if err then
-    M.notify("workspacePeek error: " .. vim.inspect(err), vim.log.levels.WARN)
-    return
-  end
-  if not result then return end
-
-  -- Decode the PlainNotification wrapper that FSAC uses for request responses.
-  -- FSAC returns { content = "<json>" } where the JSON is { Data = { Found = [...] } }.
-  -- The Found array contains the workspace items we need to extract project paths from.
-  local decoded = result
-  if type(result.content) == "string" and result.content ~= "" then
-    local ok, parsed = pcall(decode_json_payload, result.content)
-    if ok and parsed then
-      decoded = parsed
-    end
-  end
-
-  -- The actual workspace items are always under .Data.Found regardless of whether
-  -- the response came through PlainNotification or as direct JSON-RPC result.
-  -- (This matches FSAC's protocol — the VSCode extension's parse() receives res?Data)
-  local data = decoded and decoded.Data
-  if not data or type(data) ~= "table" then return end
-
-  local found = data.Found
-  if not found or type(found) ~= "table" or #found == 0 then return end
-
-  local projects = {}
-  for _, item in ipairs(found) do
-    local itemData = item.Data
-    if itemData and type(itemData) == "table" then
-      -- Solution type: Data.Items[].Name
-      if itemData.Items and type(itemData.Items) == "table" then
-        for _, proj in ipairs(itemData.Items) do
-          if type(proj) == "table" and type(proj.Name) == "string" and proj.Name:match("%.fsproj$") then
-            table.insert(projects, proj.Name)
-          end
-        end
-      end
-      -- Directory type: Data.Fsprojs[]
-      if itemData.Fsprojs and type(itemData.Fsprojs) == "table" then
-        for _, projPath in ipairs(itemData.Fsprojs) do
-          if type(projPath) == "string" then
-            table.insert(projects, projPath)
-          end
-        end
-      end
-    end
-  end
-
-  if #projects > 0 then
-    M.CallFSharpWorkspaceLoad(projects)
-  end
-end
-
 ---Call to "fsharp/workspaceLoad"
 ---@param projectFiles string[]  a string list of project files.
 ---@return table<integer, integer>, fun() 2-tuple:
@@ -1586,19 +1492,20 @@ function M.LoadProjects(projects)
   end
 end
 
----Reloads all loaded projects by requesting workspace load again.
+---Restarts all FSAC LSP clients to trigger a full re-initialization.
+---FSAC v0.83+ adaptive mode handles workspace discovery internally during
+---Initialize via AutomaticWorkspaceInit = true, so restarting the client is
+---the correct way to reload projects (client-side fsharp/workspacePeek is
+---unreachable through Ionide.LSP v0.7.0 dispatch).
 function M.ReloadProjects()
   local clients = M.GetIonideClients()
   if #clients == 0 then
-    M.notify("No ionide LSP clients available for reload", vim.log.levels.WARN)
+    M.notify("No ionide LSP clients available to restart", vim.log.levels.WARN)
     return
   end
   for _, client in ipairs(clients) do
-    local root = M.ResolveClientRootDir(client)
-    if root then
-      M.notify("Reloading workspace at " .. root)
-      M.CallFSharpWorkspacePeek(root, M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4, M.MergedConfig.settings.FSharp.excludeProjectDirectories or {}, M.handleWorkspacePeek)
-    end
+    M.notify("Restarting FSAC client " .. client.id, vim.log.levels.INFO)
+    vim.lsp.stop_client(client, { restart = true })
   end
 end
 
@@ -1836,22 +1743,11 @@ function M.OnNativeLspAttach(args)
   end
   for _, client in ipairs(clients) do
     M.OnLspAttach(client, bufnr)
-    if M.MergedConfig.IonideNvimSettings and M.MergedConfig.IonideNvimSettings.AutomaticWorkspaceInit ~= false then
-      local root = M.ResolveClientRootDir(client, bufnr)
-      if root then
-        -- Send workspacePeek directly on the known client+bufnr to avoid
-        -- M.Call re-querying nvim_get_current_buf(), which is wrong at LspAttach
-        -- time and causes "fsharp/workspacePeek is not supported" warnings.
-        local params = M.CreateFSharpWorkspacePeekRequest(
-          root,
-          M.MergedConfig.settings.FSharp.workspaceModePeekDeepLevel or 4,
-          M.MergedConfig.settings.FSharp.excludeProjectDirectories or {}
-        )
-        pcall(function()
-          client:request("fsharp/workspacePeek", params, M.handleWorkspacePeek, bufnr)
-        end)
-      end
-    end
+    -- NOTE: workspacePeek is NOT sent from the client. FSAC v0.83+ adaptive mode
+    -- handles project discovery internally during Initialize via AutomaticWorkspaceInit = true,
+    -- then loads all projects during Initialized (ParseAllFiles). The client-side
+    -- fsharp/workspacePeek method is unreachable through Ionide.LSP v0.7.0 dispatch
+    -- (returns -32601 "Method not found") and is entirely redundant.
   end
 end
 
@@ -1861,7 +1757,7 @@ function M.OnFSProjSave()
     and M.MergedConfig.IonideNvimSettings
     and M.MergedConfig.IonideNvimSettings.AutomaticReloadWorkspace == true
   then
-    M.notify("fsharp project saved, reloading...")
+    M.notify("fsharp project saved, reloading projects...")
     M.ReloadProjects()
   end
 end
@@ -2447,7 +2343,7 @@ vim.api.nvim_create_user_command("IonideQuitFSI", M.QuitFsi, { desc = "Ionide - 
 vim.api.nvim_create_user_command("IonideResetFSI", M.ResetFsi, { desc = "Ionide - Reset FSharp Interactive" })
 vim.api.nvim_create_user_command("IonideReloadProjects", function()
   M.ReloadProjects()
-end, { desc = "Ionide - Reload workspace projects" })
+end, { desc = "Ionide - Restart FSAC to trigger full workspace re-initialization" })
 
 -- fsproj file operation commands
 register_fsproj_command(
