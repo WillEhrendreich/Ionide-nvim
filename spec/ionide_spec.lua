@@ -126,12 +126,30 @@ describe("ionide.init", function()
       assert.is_true(ionide.DefaultServerSettings.codeLenses.references.enabled)
     end)
 
-    it("Given DefaultNvimSettings, when inspected, then automatic attach niceties are off by default", function()
-      assert.is_false(ionide.DefaultNvimSettings.AutomaticCodeLensRefresh)
+    it("Given DefaultNvimSettings, when inspected, then code lenses refresh after document analysis", function()
+      assert.is_true(ionide.DefaultNvimSettings.AutomaticCodeLensRefresh)
       assert.is_false(ionide.DefaultNvimSettings.ShowSignatureOnCursorMove)
       assert.is_false(ionide.DefaultNvimSettings.UseIonideDocumentationHover)
       assert.is_false(ionide.DefaultNvimSettings.AutomaticReloadWorkspace)
       assert.is_true(ionide.DefaultNvimSettings.AutomaticWorkspaceInit)
+    end)
+  end)
+
+  describe("LSP initialization options", function()
+    it("Given the default Ionide settings, when setup runs, then AutomaticWorkspaceInit is sent to FsAutoComplete", function()
+      local config = ionide.setup({})
+
+      assert.is_true(config.init_options.AutomaticWorkspaceInit)
+    end)
+
+    it("Given AutomaticWorkspaceInit is overridden, when setup runs, then the override is sent to FsAutoComplete", function()
+      local config = ionide.setup({
+        IonideNvimSettings = {
+          AutomaticWorkspaceInit = false,
+        },
+      })
+
+      assert.is_false(config.init_options.AutomaticWorkspaceInit)
     end)
   end)
 
@@ -275,6 +293,11 @@ describe("ionide.init", function()
         server_capabilities = { CodeLensProvider = { ResolveProvider = true } },
         __supported_methods = { ["textDocument/codeLens"] = true },
       })
+      ionide.setup({
+        IonideNvimSettings = {
+          AutomaticCodeLensRefresh = false,
+        },
+      })
 
       ionide.OnLspAttach(client, 11)
 
@@ -348,10 +371,8 @@ describe("ionide.init", function()
   end)
 
   describe("custom notifications", function()
-    it("Given fsharp/documentAnalyzed, when handled, then codelens refreshes when enabled", function()
-      ionide.MergedConfig = vim.tbl_deep_extend("force", ionide.DefaultLspConfig, {
-        IonideNvimSettings = { AutomaticCodeLensRefresh = true },
-      })
+    it("Given fsharp/documentAnalyzed, when handled, then codelens refreshes by default", function()
+      ionide.MergedConfig = vim.tbl_deep_extend("force", ionide.DefaultLspConfig)
       vim.__test.buffer_names[21] = "/workspace/File.fs"
 
       ionide.Handlers["fsharp/documentAnalyzed"](nil, {
