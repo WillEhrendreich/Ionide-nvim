@@ -1086,4 +1086,120 @@ describe("ionide bug regression suite", function()
         "bufadd SHOULD be called when FSAC hasn't started yet (needed for bootstrap)")
     end)
   end)
+
+  -- ===========================================================================
+  -- STARTUP NOISE: setup() dumped the whole merged config as INFO notifications
+  -- ===========================================================================
+  -- setup() called M.notify three times with vim.inspect of the passed-in config,
+  -- the merged config (several hundred lines) and the resolved cmd.  That is
+  -- development instrumentation: every session began with a wall of text before
+  -- a single F# feature was usable.  The merged config is still inspectable on
+  -- demand via `:lua vim.print(require("ionide").MergedConfig)`.
+
+  describe("setup() is quiet", function()
+    it("Given a default setup, when setup runs, then it emits no notifications", function()
+      ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+
+      local messages = {}
+      for _, notification in ipairs(vim.__test.notifications) do
+        table.insert(messages, tostring(notification.msg))
+      end
+
+      assert.equals(0, #vim.__test.notifications,
+        "setup must not notify; got: " .. table.concat(messages, " | "))
+    end)
+  end)
+
+  -- ===========================================================================
+  -- STARTUP NOISE: transient "not in LoadedProjects" errors
+  -- ===========================================================================
+  -- FSAC loads the workspace asynchronously after Initialize.  Any request for a
+  -- file whose project is not loaded yet is answered with
+  --   -32603 "Couldn't find <file> in LoadedProjects…"
+  -- Neovim's default handlers turn every one of those into an error popup, so
+  -- opening a solution produced a burst of identical errors that resolve
+  -- themselves the moment FSAC finishes loading.  Ionide now routes unhandled
+  -- methods through a wrapper that swallows this transient error (after one
+  -- explanatory notice per client) and passes everything else through untouched.
+
+  describe("transient project-load errors are not spammed", function()
+    local function loaded_projects_error(file)
+      return {
+        code = -32603,
+        message = "Couldn't find " .. file .. " in LoadedProjects. Have the projects loaded yet"
+          .. " or have you tried restoring your project/solution?",
+      }
+    end
+
+    it("Given FSAC has not loaded projects, when many requests fail, then only one notice is shown", function()
+      local calls = 0
+      vim.lsp.handlers["textDocument/documentHighlight"] = function()
+        calls = calls + 1
+      end
+
+      local config = ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+      local handler = config.handlers["textDocument/documentHighlight"]
+      assert.is_function(handler)
+
+      for _ = 1, 5 do
+        handler(loaded_projects_error("/workspace/Wire.fs"), nil, { client_id = 1 }, {})
+      end
+
+      assert.equals(0, calls, "the default handler must not run for a transient project-load error")
+      assert.equals(1, #vim.__test.notifications,
+        "the user should be told once that projects are still loading, not once per request")
+    end)
+
+    it("Given a restarted client, when the error recurs, then the notice is shown again for it", function()
+      vim.lsp.handlers["textDocument/documentHighlight"] = function() end
+
+      local config = ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+      local handler = config.handlers["textDocument/documentHighlight"]
+
+      handler(loaded_projects_error("/workspace/Wire.fs"), nil, { client_id = 1 }, {})
+      handler(loaded_projects_error("/workspace/Wire.fs"), nil, { client_id = 2 }, {})
+
+      assert.equals(2, #vim.__test.notifications,
+        "a new client means a new FSAC process — its first transient error is worth reporting")
+    end)
+
+    it("Given a genuine server error, when it arrives, then the default handler still sees it", function()
+      local seen_err
+      vim.lsp.handlers["textDocument/definition"] = function(err)
+        seen_err = err
+      end
+
+      local config = ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+      config.handlers["textDocument/definition"]({ code = -32603, message = "boom" }, nil, { client_id = 1 }, {})
+
+      assert.is_not_nil(seen_err, "non-transient errors must reach Neovim's default handler untouched")
+      assert.equals("boom", seen_err.message)
+    end)
+
+    it("Given a successful response, when it arrives, then the default handler receives the result", function()
+      local seen_result
+      vim.lsp.handlers["textDocument/documentSymbol"] = function(_, result)
+        seen_result = result
+      end
+
+      local config = ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+      config.handlers["textDocument/documentSymbol"](nil, { "symbol" }, { client_id = 1 }, {})
+
+      assert.same({ "symbol" }, seen_result)
+    end)
+
+    it("Given a method Neovim has no handler for, when resolved, then Ionide supplies none either", function()
+      -- WHY: returning a wrapper for every method would silently swallow the
+      -- "unsupported method" path Neovim relies on to log unknown requests.
+      local config = ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+
+      assert.is_nil(config.handlers["textDocument/somethingNeovimDoesNotKnow"])
+    end)
+
+    it("Given Ionide's own fsharp/ handlers, when resolved, then they are not wrapped away", function()
+      local config = ionide.setup({ IonideNvimSettings = { AutomaticWorkspaceInit = false } })
+
+      assert.equals(ionide.Handlers["fsharp/documentAnalyzed"], config.handlers["fsharp/documentAnalyzed"])
+    end)
+  end)
 end)

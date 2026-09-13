@@ -4,7 +4,26 @@ package.path = "./lua/?.lua;./lua/?/init.lua;./spec/?.lua;" .. package.path
 
 describe("FSAC config contract", function()
   local ionide
-  local fsac_lsp_helpers = "C:/Code/Repos/fsautocomplete/src/FsAutoComplete/LspHelpers.fs"
+
+  -- The contract is checked against a local FsAutoComplete checkout, which lives
+  -- wherever this machine keeps its clones. Without one there is nothing to
+  -- compare against, so these tests report as pending rather than failing.
+  local function find_fsac_lsp_helpers()
+    local repo_roots = { os.getenv("repos"), os.getenv("HOME") and os.getenv("HOME") .. "/Work", "C:/Code/Repos" }
+    for _, root in ipairs(repo_roots) do
+      if root and root ~= "" then
+        local path = root .. "/fsautocomplete/src/FsAutoComplete/LspHelpers.fs"
+        local handle = io.open(path, "r")
+        if handle then
+          handle:close()
+          return path
+        end
+      end
+    end
+    return nil
+  end
+
+  local fsac_lsp_helpers = find_fsac_lsp_helpers()
 
   local function reset_module()
     vim.__test.reset()
@@ -72,6 +91,9 @@ describe("FSAC config contract", function()
     -- removes fields like WorkspaceModePeekDeepLevel or FSIExtraParameters, Ionide
     -- may silently stop configuring behavior correctly. We want that to break tests
     -- immediately, not drift in production.
+    if not fsac_lsp_helpers then
+      return pending("no local FsAutoComplete checkout to check the contract against")
+    end
     local source = read_all(fsac_lsp_helpers)
 
     local fsharp = extract_record_fields(source, "FSharpConfigDto")
@@ -134,6 +156,9 @@ describe("FSAC config contract", function()
     -- Why: this protects the subset of fields actually present in DefaultServerSettings,
     -- not just the broader documented/configurable surface. If one of these gets renamed
     -- upstream, Ionide's defaults become stale immediately.
+    if not fsac_lsp_helpers then
+      return pending("no local FsAutoComplete checkout to check the contract against")
+    end
     local source = read_all(fsac_lsp_helpers)
     local fsharp = extract_record_fields(source, "FSharpConfigDto")
 

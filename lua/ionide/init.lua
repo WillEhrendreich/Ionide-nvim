@@ -558,6 +558,51 @@ M.Handlers = {
   end,
 }
 
+---FSAC answers requests for a file whose project it has not finished loading with
+---an InternalError naming LoadedProjects. It is transient — the same request
+---succeeds once the workspace finishes loading — so it is worth one explanation
+---per server, not one error popup per request.
+---@param err? lsp.ResponseError
+---@return boolean
+local function is_projects_still_loading_error(err)
+  return type(err) == "table"
+    and err.code == -32603
+    and type(err.message) == "string"
+    and err.message:find("LoadedProjects", 1, true) ~= nil
+end
+
+M.State.projects_loading_notified = {}
+
+---Wraps Neovim's default handler for every standard method, so a transient
+---project-load error is explained once instead of raising an error popup per
+---request. Methods Ionide already handles, and methods Neovim has no handler
+---for, are left alone.
+---@param handlers table<string,lsp.Handler>
+---@return table<string,lsp.Handler>
+function M.FilterProjectLoadErrors(handlers)
+  for method in pairs(vim.lsp.handlers) do
+    if not handlers[method] then
+      handlers[method] = function(err, result, ctx, config)
+        if is_projects_still_loading_error(err) then
+          local client_id = (ctx and ctx.client_id) or 0
+          if not M.State.projects_loading_notified[client_id] then
+            M.State.projects_loading_notified[client_id] = true
+            M.notify(
+              "FsAutoComplete is still loading the workspace — F# features stay limited until it finishes.",
+              vim.log.levels.INFO
+            )
+          end
+          return
+        end
+        -- Resolved per call: another plugin may replace the default handler
+        -- after Ionide's setup has run.
+        return vim.lsp.handlers[method](err, result, ctx, config)
+      end
+    end
+  end
+  return handlers
+end
+
 ---@type IonideOptions
 M.MergedConfig = {}
 
@@ -2466,17 +2511,14 @@ end, { desc = "Ionide - Extract F# function from selection" })
 
 function M.setup(config)
   M.PassedInConfig = config or {}
-  M.notify("entered setup for ionide: passed in config is  " .. vim.inspect(M.PassedInConfig))
   M.MergedConfig = vim.tbl_deep_extend("force", M.DefaultLspConfig, M.PassedInConfig)
   M.MergedConfig.init_options = vim.tbl_deep_extend("force", M.MergedConfig.init_options or {}, {
     AutomaticWorkspaceInit = M.MergedConfig.IonideNvimSettings.AutomaticWorkspaceInit,
   })
-  M.notify(" after merging the default and what was passed in we get " .. vim.inspect(M.MergedConfig))
   M.MergedConfig.cmd =
     fsautocomplete_command(M.MergedConfig.IonideNvimSettings.FsautocompleteCommand, M.MergedConfig.settings)
-  M.notify("after merging the command is  " .. vim.inspect(M.MergedConfig.cmd))
-  M.MergedConfig.handlers = vim.tbl_deep_extend("force", M.Handlers, M.MergedConfig.handlers or {})
-  -- M.notify("Initializing")
+  M.MergedConfig.handlers =
+    M.FilterProjectLoadErrors(vim.tbl_deep_extend("force", M.Handlers, M.MergedConfig.handlers or {}))
 
   vim.validate({
     cmd = { M.MergedConfig.cmd, "table", true },

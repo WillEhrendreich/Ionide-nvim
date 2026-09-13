@@ -16,6 +16,9 @@ end
 vim.__test = {}
 
 function vim.__test.reset()
+  if vim.lsp then
+    vim.lsp.handlers = {}
+  end
   vim.__test.notifications = {}
   vim.__test.user_commands = {}
   vim.__test.autocmds = {}
@@ -214,7 +217,7 @@ vim.notify = function(msg, level, opts)
   table.insert(vim.__test.notifications, { msg = msg, level = level, opts = opts })
 end
 
-vim.log = { levels = { WARN = 2, ERROR = 4, INFO = 1 } }
+vim.log = { levels = { TRACE = 0, DEBUG = 1, INFO = 2, WARN = 3, ERROR = 4, OFF = 5 } }
 vim.v = { shell_error = 0 }
 
 vim.fn = {
@@ -456,6 +459,9 @@ vim.lsp = {
     MessageType = { Warning = 2 },
     make_client_capabilities = function() return {} end,
   },
+  -- Neovim's built-in per-method handlers. Tests populate this to check how
+  -- Ionide wraps or defers to them.
+  handlers = {},
   start = function() end,
   get_buffers_by_client_id = function(client_id)
     return vim.__test.buffers_by_client_id[client_id] or {}
